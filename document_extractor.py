@@ -7,9 +7,10 @@ Returns extracted information as structured JSON data.
 
 import os
 import json
+import base64
 import logging
 import tempfile
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pypdf
 from openai import OpenAI
@@ -174,6 +175,166 @@ def extract_from_binary_data(file_content: bytes, schema: Optional[Dict[str, Any
     
     except Exception as e:
         logger.error(f"Error processing binary data: {str(e)}")
+        return {"success": False, "error": f"Error processing document: {str(e)}"}
+
+
+def convert_pdf_page_to_base64(file_path: str, page_num: int = 0) -> str:
+    """
+    Convert a PDF page to a base64-encoded string
+    
+    Args:
+        file_path: Path to the PDF file
+        page_num: Page number to convert (0-indexed)
+        
+    Returns:
+        Base64-encoded string of the page image
+    """
+    import fitz  # PyMuPDF
+
+    try:
+        # Open the PDF
+        doc = fitz.open(file_path)
+        
+        # Check if page exists
+        if page_num >= len(doc):
+            raise ValueError(f"Page {page_num} does not exist in the document with {len(doc)} pages")
+        
+        # Get the page
+        page = doc.load_page(page_num)
+        
+        # Render the page to an image
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom for better resolution
+        
+        # Get the image as bytes
+        img_bytes = pix.tobytes("png")
+        
+        # Convert to base64
+        base64_image = base64.b64encode(img_bytes).decode("utf-8")
+        
+        return base64_image
+    
+    except Exception as e:
+        logger.error(f"Error converting PDF page to base64: {str(e)}")
+        raise
+
+
+def extract_tables_from_pdf(file_path: str) -> Dict[str, Any]:
+    """
+    Extract tables from a PDF document using OpenAI's vision capabilities
+    
+    Args:
+        file_path: Path to the PDF document
+        
+    Returns:
+        Dictionary with extraction results including tables found in the document
+    """
+    try:
+        # Read the PDF to get total number of pages
+        pdf = pypdf.PdfReader(file_path)
+        total_pages = len(pdf.pages)
+        
+        if total_pages == 0:
+            return {"success": False, "error": "PDF document is empty"}
+        
+        # List to store all tables
+        all_tables = []
+        
+        # Process each page (limit to 20 pages for performance)
+        page_limit = min(total_pages, 20)
+        
+        for page_num in range(page_limit):
+            try:
+                # Convert the page to base64
+                base64_image = convert_pdf_page_to_base64(file_path, page_num)
+                
+                # Prepare system message for table extraction
+                system_prompt = (
+                    "You are a table extraction expert. Identify and extract any tables in this PDF page. "
+                    "If multiple tables are present, extract each one separately and provide a brief title or description for each table. "
+                    "Format the output as a JSON array of table objects with this structure: "
+                    "[{\"table_title\": \"Title of the table\", \"headers\": [\"Column1\", \"Column2\", ...], \"data\": [[\"row1col1\", \"row1col2\", ...], [\"row2col1\", \"row2col2\", ...], ...]}, ...]. "
+                    "If no tables are present in the image, return an empty array []. "
+                    "Make sure to maintain the row and column structure of each table. "
+                    "Only extract actual tables with proper headers and rows. Do not extract lists, paragraphs of text, or other non-tabular content."
+                )
+                
+                # Make the API call to OpenAI
+                # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
+                # do not change this unless explicitly requested by the user
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": f"Extract all tables from this PDF page (page {page_num + 1} of {total_pages})."},
+                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
+                            ]
+                        }
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.1,
+                    max_tokens=2000
+                )
+                
+                # Parse the response
+                response_content = response.choices[0].message.content
+                response_data = json.loads(response_content)
+                
+                # Add page number info to the tables
+                for table in response_data:
+                    if isinstance(table, dict):
+                        table["page_number"] = page_num + 1
+                        all_tables.append(table)
+                
+                logger.info(f"Processed page {page_num + 1}, found {len(response_data)} tables")
+                
+            except Exception as e:
+                logger.warning(f"Error processing page {page_num + 1}: {str(e)}")
+                continue
+        
+        return {
+            "success": True,
+            "tables": all_tables,
+            "total_tables": len(all_tables),
+            "pages_processed": page_limit,
+            "total_pages": total_pages
+        }
+    
+    except Exception as e:
+        logger.error(f"Error extracting tables from document: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+
+def extract_tables_from_binary_data(file_content: bytes) -> Dict[str, Any]:
+    """
+    Extract tables from binary document content
+    
+    Args:
+        file_content: Binary content of the document
+        
+    Returns:
+        Dictionary with extraction results including tables found in the document
+    """
+    try:
+        # Save the binary content to a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(file_content)
+            tmp_path = tmp.name
+        
+        try:
+            # Extract tables from the temporary file
+            result = extract_tables_from_pdf(tmp_path)
+            
+            return result
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    
+    except Exception as e:
+        logger.error(f"Error processing binary data for table extraction: {str(e)}")
         return {"success": False, "error": f"Error processing document: {str(e)}"}
 
 

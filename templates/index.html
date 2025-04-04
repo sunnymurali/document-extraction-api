@@ -12,52 +12,70 @@
         <header class="mb-5 text-center">
             <h1 class="display-4">Document Data Extractor</h1>
             <p class="lead">Upload documents to extract structured data using AI</p>
+            
+            <!-- Tab navigation -->
+            <ul class="nav nav-tabs justify-content-center mt-4" id="extractorTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#general-extraction" type="button" role="tab" aria-controls="general-extraction" aria-selected="true">
+                        General Extraction
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="tables-tab" data-bs-toggle="tab" data-bs-target="#tables-extraction" type="button" role="tab" aria-controls="tables-extraction" aria-selected="false">
+                        Table Extraction
+                    </button>
+                </li>
+            </ul>
         </header>
 
-        <div class="row">
-            <div class="col-md-6">
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h2 class="card-title h5 mb-0">Upload Document</h2>
-                    </div>
-                    <div class="card-body">
-                        <form id="upload-form" enctype="multipart/form-data">
-                            <div class="mb-3">
-                                <label for="document-file" class="form-label">Document File</label>
-                                <input type="file" class="form-control" id="document-file" name="file" accept=".pdf,.txt,.doc,.docx" required>
-                                <div class="form-text">Supported formats: PDF, TXT, DOC, DOCX (Max 10MB)</div>
+        <!-- Tab content -->
+        <div class="tab-content" id="extractorTabsContent">
+            <!-- General Extraction Tab -->
+            <div class="tab-pane fade show active" id="general-extraction" role="tabpanel" aria-labelledby="general-tab">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h2 class="card-title h5 mb-0">Upload Document</h2>
                             </div>
-                            
-                            <div class="mb-3">
-                                <label for="extraction-schema" class="form-label">Extraction Schema (Optional)</label>
-                                <textarea class="form-control" id="extraction-schema" name="extraction_schema" rows="8" placeholder='{"fields": [{"name": "invoice_number", "description": "The invoice identification number"}, {"name": "date", "description": "The invoice date"}]}'></textarea>
-                                <div class="form-text">Define specific fields to extract in JSON format</div>
+                            <div class="card-body">
+                                <form id="upload-form" enctype="multipart/form-data">
+                                    <div class="mb-3">
+                                        <label for="document-file" class="form-label">Document File</label>
+                                        <input type="file" class="form-control" id="document-file" name="file" accept=".pdf,.txt,.doc,.docx" required>
+                                        <div class="form-text">Supported formats: PDF, TXT, DOC, DOCX (Max 10MB)</div>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label for="extraction-schema" class="form-label">Extraction Schema (Optional)</label>
+                                        <textarea class="form-control" id="extraction-schema" name="extraction_schema" rows="8" placeholder='{"fields": [{"name": "invoice_number", "description": "The invoice identification number"}, {"name": "date", "description": "The invoice date"}]}'></textarea>
+                                        <div class="form-text">Define specific fields to extract in JSON format</div>
+                                    </div>
+                                    
+                                    <div class="d-grid">
+                                        <button type="submit" class="btn btn-primary" id="extract-btn">
+                                            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true" id="loading-spinner"></span>
+                                            Extract Data
+                                        </button>
+                                    </div>
+                                </form>
                             </div>
-                            
-                            <div class="d-grid">
-                                <button type="submit" class="btn btn-primary" id="extract-btn">
-                                    <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true" id="loading-spinner"></span>
-                                    Extract Data
-                                </button>
+                        </div>
+                        
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h2 class="card-title h5 mb-0">Extraction Guide</h2>
                             </div>
-                        </form>
-                    </div>
-                </div>
-                
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h2 class="card-title h5 mb-0">Extraction Guide</h2>
-                    </div>
-                    <div class="card-body">
-                        <p>This tool extracts structured data from documents using AI. It works best with:</p>
-                        <ul>
-                            <li>Invoices and receipts</li>
-                            <li>Business documents</li>
-                            <li>Forms and applications</li>
-                            <li>Contracts and agreements</li>
-                        </ul>
-                        <p><strong>Schema Format Example:</strong></p>
-                        <pre class="bg-dark p-2 rounded"><code>{
+                            <div class="card-body">
+                                <p>This tool extracts structured data from documents using AI. It works best with:</p>
+                                <ul>
+                                    <li>Invoices and receipts</li>
+                                    <li>Business documents</li>
+                                    <li>Forms and applications</li>
+                                    <li>Contracts and agreements</li>
+                                </ul>
+                                <p><strong>Schema Format Example:</strong></p>
+                                <pre class="bg-dark p-2 rounded"><code>{
   "fields": [
     {
       "name": "invoice_number",
@@ -73,22 +91,99 @@
     }
   ]
 }</code></pre>
-                        <p class="mb-0">Without a schema, the system will extract common fields automatically.</p>
+                                <p class="mb-0">Without a schema, the system will extract common fields automatically.</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h2 class="card-title h5 mb-0">Extraction Results</h2>
+                                <button class="btn btn-sm btn-outline-secondary" id="copy-json-btn" disabled>Copy JSON</button>
+                            </div>
+                            <div class="card-body">
+                                <div id="results-container">
+                                    <div class="text-center py-5 text-secondary">
+                                        <i class="fas fa-file-alt fa-3x mb-3"></i>
+                                        <p>Upload a document to see extraction results</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
             
-            <div class="col-md-6">
-                <div class="card">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h2 class="card-title h5 mb-0">Extraction Results</h2>
-                        <button class="btn btn-sm btn-outline-secondary" id="copy-json-btn" disabled>Copy JSON</button>
+            <!-- Table Extraction Tab -->
+            <div class="tab-pane fade" id="tables-extraction" role="tabpanel" aria-labelledby="tables-tab">
+                <div class="row">
+                    <div class="col-md-5">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h2 class="card-title h5 mb-0">Upload PDF with Tables</h2>
+                            </div>
+                            <div class="card-body">
+                                <form id="tables-form" enctype="multipart/form-data">
+                                    <div class="mb-3">
+                                        <label for="tables-file" class="form-label">PDF Document</label>
+                                        <input type="file" class="form-control" id="tables-file" name="file" accept=".pdf" required>
+                                        <div class="form-text">Only PDF files are supported for table extraction (Max 10MB)</div>
+                                    </div>
+                                    
+                                    <div class="d-grid">
+                                        <button type="submit" class="btn btn-primary" id="extract-tables-btn">
+                                            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true" id="tables-loading-spinner"></span>
+                                            Extract Tables
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                        
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h2 class="card-title h5 mb-0">Table Extraction Guide</h2>
+                            </div>
+                            <div class="card-body">
+                                <p>This tool extracts tables from PDF documents using AI.</p>
+                                <p><strong>Features:</strong></p>
+                                <ul>
+                                    <li>Identifies and extracts multiple tables from a PDF</li>
+                                    <li>Maintains row and column structure</li>
+                                    <li>Works with complex table layouts</li>
+                                    <li>Provides table titles when available</li>
+                                    <li>Reports page numbers for each table</li>
+                                </ul>
+                                <p><strong>Best Practices:</strong></p>
+                                <ul>
+                                    <li>Use PDFs with clearly defined tables</li>
+                                    <li>Tables should have distinct borders or spacing</li>
+                                    <li>Higher quality PDFs yield better results</li>
+                                </ul>
+                                <p class="mb-0 text-info">Processing can take a minute or more depending on the number of pages and tables.</p>
+                            </div>
+                        </div>
                     </div>
-                    <div class="card-body">
-                        <div id="results-container">
-                            <div class="text-center py-5 text-secondary">
-                                <i class="fas fa-file-alt fa-3x mb-3"></i>
-                                <p>Upload a document to see extraction results</p>
+                    
+                    <div class="col-md-7">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h2 class="card-title h5 mb-0">Extracted Tables</h2>
+                                <div>
+                                    <select id="table-selector" class="form-select form-select-sm d-none">
+                                        <option value="">Select a table...</option>
+                                    </select>
+                                    <button class="btn btn-sm btn-outline-secondary ms-2" id="copy-tables-json-btn" disabled>Copy JSON</button>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <div id="tables-results-container">
+                                    <div class="text-center py-5 text-secondary">
+                                        <i class="fas fa-table fa-3x mb-3"></i>
+                                        <p>Upload a PDF document to see extracted tables</p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

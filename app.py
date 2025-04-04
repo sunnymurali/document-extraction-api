@@ -10,7 +10,12 @@ from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 
 # Import the document extractor
-from document_extractor import extract_from_binary_data, extract_document_data
+from document_extractor import (
+    extract_from_binary_data, 
+    extract_document_data,
+    extract_tables_from_binary_data,
+    extract_tables_from_pdf
+)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -123,6 +128,56 @@ def extract_data():
     
     except Exception as e:
         logger.error(f"Error in extraction process: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/extract-tables', methods=['POST'])
+def extract_tables():
+    """
+    API endpoint to extract tables from uploaded documents
+    
+    Request: multipart/form-data with:
+    - file: The document file (PDF only)
+    
+    Response: JSON with extraction results including tables found in the document
+    """
+    # Check if a file was uploaded
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file uploaded'}), 400
+    
+    file = request.files['file']
+    
+    # Check if file was selected
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'No file selected'}), 400
+    
+    # Check file type - tables extraction only works with PDFs
+    if not file.filename.lower().endswith('.pdf'):
+        return jsonify({'success': False, 'error': 'Table extraction only supports PDF files'}), 400
+    
+    try:
+        # Save the file
+        filename = secure_filename(file.filename)
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(file_path)
+        
+        try:
+            # Process the uploaded file with our table extractor
+            result = extract_tables_from_pdf(file_path)
+            
+            # Return the results as JSON
+            return jsonify(result)
+        
+        finally:
+            # Clean up the uploaded file
+            try:
+                if os.path.exists(file_path):
+                    os.unlink(file_path)
+            except Exception as e:
+                logger.error(f"Error removing temporary file: {e}")
+    
+    except Exception as e:
+        logger.error(f"Error in table extraction process: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

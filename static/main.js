@@ -4,7 +4,7 @@
  */
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Elements
+    // General extraction elements
     const uploadForm = document.getElementById('upload-form');
     const fileInput = document.getElementById('document-file');
     const extractBtn = document.getElementById('extract-btn');
@@ -13,6 +13,15 @@ document.addEventListener('DOMContentLoaded', function() {
     const resultsContainer = document.getElementById('results-container');
     const copyJsonBtn = document.getElementById('copy-json-btn');
     const schemaInput = document.getElementById('extraction-schema');
+    
+    // Table extraction elements
+    const tablesForm = document.getElementById('tables-form');
+    const tablesFileInput = document.getElementById('tables-file');
+    const extractTablesBtn = document.getElementById('extract-tables-btn');
+    const tablesLoadingSpinner = document.getElementById('tables-loading-spinner');
+    const tablesResultsContainer = document.getElementById('tables-results-container');
+    const copyTablesJsonBtn = document.getElementById('copy-tables-json-btn');
+    const tableSelector = document.getElementById('table-selector');
     
     // Store the extracted data for copy functionality
     let extractedData = null;
@@ -241,4 +250,245 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Insert the button after the schema input
     schemaInput.parentElement.appendChild(exampleBtn);
+
+    // Variable to store extracted tables data
+    let extractedTablesData = null;
+
+    // Handle table extraction form submission
+    tablesForm.addEventListener('submit', function(event) {
+        event.preventDefault();
+        
+        // Validate file selection
+        if (!tablesFileInput.files || tablesFileInput.files.length === 0) {
+            showAlert('danger', 'Please select a PDF file to upload');
+            return;
+        }
+        
+        // Validate file type
+        const fileName = tablesFileInput.files[0].name;
+        if (!fileName.toLowerCase().endsWith('.pdf')) {
+            showAlert('danger', 'Only PDF files are supported for table extraction');
+            return;
+        }
+        
+        // Start loading state for tables
+        startTablesLoading();
+        
+        // Prepare form data for upload
+        const formData = new FormData();
+        formData.append('file', tablesFileInput.files[0]);
+        
+        // Make the API request to extract tables
+        fetch('/api/extract-tables', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            // Store the data for copy functionality
+            extractedTablesData = data;
+            
+            // Display table results
+            displayTablesResults(data);
+            
+            // Enable copy button
+            copyTablesJsonBtn.disabled = false;
+            
+            // Show success message
+            if (data.success && data.tables && data.tables.length > 0) {
+                showAlert('success', `Successfully extracted ${data.total_tables} tables from ${data.pages_processed} pages`);
+            } else if (data.success && (!data.tables || data.tables.length === 0)) {
+                showAlert('warning', 'No tables found in the document');
+            } else {
+                showAlert('warning', 'Table extraction completed with errors: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showAlert('danger', 'Failed to process document: ' + error.message);
+            
+            // Reset table results area
+            tablesResultsContainer.innerHTML = `
+                <div class="alert alert-danger">
+                    <h4 class="alert-heading">Table Extraction Failed</h4>
+                    <p>${error.message || 'Unknown error occurred during processing'}</p>
+                </div>
+            `;
+        })
+        .finally(() => {
+            stopTablesLoading();
+        });
+    });
+
+    // Copy Tables JSON button
+    copyTablesJsonBtn.addEventListener('click', function() {
+        if (!extractedTablesData) return;
+        
+        const jsonStr = JSON.stringify(extractedTablesData, null, 2);
+        navigator.clipboard.writeText(jsonStr).then(
+            function() {
+                showAlert('info', 'Tables JSON copied to clipboard');
+                // Visual feedback
+                copyTablesJsonBtn.innerText = 'Copied!';
+                setTimeout(() => {
+                    copyTablesJsonBtn.innerText = 'Copy JSON';
+                }, 2000);
+            },
+            function() {
+                showAlert('danger', 'Failed to copy to clipboard');
+            }
+        );
+    });
+
+    // Table selector change event
+    tableSelector.addEventListener('change', function() {
+        const selectedIndex = this.value;
+        
+        if (!selectedIndex || !extractedTablesData || !extractedTablesData.tables) {
+            return;
+        }
+        
+        // Show the selected table
+        displayTableDetails(extractedTablesData.tables[selectedIndex]);
+    });
+
+    /**
+     * Display table extraction results
+     */
+    function displayTablesResults(data) {
+        // Clear previous results
+        tablesResultsContainer.innerHTML = '';
+        
+        // Reset table selector
+        tableSelector.innerHTML = '<option value="">Select a table...</option>';
+        tableSelector.classList.add('d-none');
+        
+        if (data.success && data.tables && data.tables.length > 0) {
+            // Create summary of tables
+            const summaryHtml = `
+                <div class="mb-4">
+                    <h4>Tables Found: ${data.total_tables}</h4>
+                    <p>Processed ${data.pages_processed} out of ${data.total_pages} pages</p>
+                </div>
+            `;
+            
+            // Add tables to selector
+            data.tables.forEach((table, index) => {
+                const tableTitle = table.table_title || `Table ${index + 1} (Page ${table.page_number})`;
+                const option = document.createElement('option');
+                option.value = index;
+                option.textContent = tableTitle;
+                tableSelector.appendChild(option);
+            });
+            
+            // Show the selector
+            tableSelector.classList.remove('d-none');
+            
+            // Display the first table by default
+            const firstTableHtml = renderTableHtml(data.tables[0]);
+            
+            tablesResultsContainer.innerHTML = summaryHtml + firstTableHtml;
+        } else if (data.success && (!data.tables || data.tables.length === 0)) {
+            // No tables found
+            tablesResultsContainer.innerHTML = `
+                <div class="alert alert-warning">
+                    <h4 class="alert-heading">No Tables Found</h4>
+                    <p>The document was processed successfully, but no tables were detected.</p>
+                    <p class="mb-0">Try a different document or ensure that tables in the document have clear boundaries.</p>
+                </div>
+            `;
+        } else {
+            // Show error
+            tablesResultsContainer.innerHTML = `
+                <div class="alert alert-warning">
+                    <h4 class="alert-heading">Table Extraction Problem</h4>
+                    <p>${data.error || 'No tables could be extracted from the document'}</p>
+                </div>
+            `;
+        }
+    }
+
+    /**
+     * Display details of a specific table
+     */
+    function displayTableDetails(tableData) {
+        // Get the table container
+        const tableContainer = document.createElement('div');
+        tableContainer.innerHTML = renderTableHtml(tableData);
+        
+        // Find existing summary section
+        const summarySection = tablesResultsContainer.querySelector('div:first-child');
+        
+        // Replace everything but the summary with the new table
+        tablesResultsContainer.innerHTML = '';
+        if (summarySection) {
+            tablesResultsContainer.appendChild(summarySection);
+        }
+        tablesResultsContainer.appendChild(tableContainer);
+    }
+
+    /**
+     * Render HTML for a table
+     */
+    function renderTableHtml(tableData) {
+        if (!tableData || !tableData.headers || !tableData.data) {
+            return '<div class="alert alert-warning">Invalid table data</div>';
+        }
+        
+        // Create table title
+        const titleHtml = tableData.table_title ? 
+            `<h4 class="mb-3">${tableData.table_title}</h4>` : 
+            '';
+        
+        // Create page info
+        const pageInfo = tableData.page_number ? 
+            `<div class="text-muted mb-3">Found on page ${tableData.page_number}</div>` : 
+            '';
+        
+        // Create table headers
+        const headersHtml = tableData.headers.map(header => 
+            `<th scope="col">${header}</th>`
+        ).join('');
+        
+        // Create table rows
+        const rowsHtml = tableData.data.map(row => 
+            `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`
+        ).join('');
+        
+        // Create complete table HTML
+        return `
+            <div class="table-container">
+                ${titleHtml}
+                ${pageInfo}
+                <div class="table-responsive">
+                    <table class="table table-striped table-bordered">
+                        <thead class="thead-dark">
+                            <tr>${headersHtml}</tr>
+                        </thead>
+                        <tbody>
+                            ${rowsHtml}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    }
+
+    /**
+     * Start loading state for table extraction
+     */
+    function startTablesLoading() {
+        extractTablesBtn.disabled = true;
+        tablesLoadingSpinner.classList.remove('d-none');
+        loadingOverlay.classList.remove('d-none');
+    }
+    
+    /**
+     * Stop loading state for table extraction
+     */
+    function stopTablesLoading() {
+        extractTablesBtn.disabled = false;
+        tablesLoadingSpinner.classList.add('d-none');
+        loadingOverlay.classList.add('d-none');
+    }
 });
