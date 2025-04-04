@@ -91,6 +91,51 @@
     max-width: 300px;
 }
 
+/* Field Builder */
+.field-item {
+    background-color: rgba(40, 44, 52, 0.5);
+    border-radius: 6px;
+    border: 1px solid var(--bs-border-color);
+    padding: 1rem;
+    margin-bottom: 1rem;
+    position: relative;
+}
+
+.field-item .field-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.field-controls {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.field-controls button {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.8rem;
+}
+
+.field-item .form-control {
+    margin-bottom: 0.5rem;
+}
+
+.field-item .form-control:last-child {
+    margin-bottom: 0;
+}
+
+.field-item .field-number {
+    font-weight: bold;
+    margin-right: 0.5rem;
+}
+
+.drag-handle {
+    cursor: move;
+    color: var(--bs-secondary);
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
     .json-display {
@@ -108,5 +153,14 @@
     #table-selector {
         min-width: 120px;
         max-width: 160px;
+    }
+    
+    .field-item {
+        padding: 0.75rem;
+    }
+    
+    .field-controls button {
+        padding: 0.2rem 0.4rem;
+        font-size: 0.75rem;
     }
 }

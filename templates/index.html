@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Document Data Extractor</title>
     <link rel="stylesheet" href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -47,9 +48,36 @@
                                     </div>
                                     
                                     <div class="mb-3">
-                                        <label for="extraction-schema" class="form-label">Extraction Schema (Optional)</label>
-                                        <textarea class="form-control" id="extraction-schema" name="extraction_schema" rows="8" placeholder='{"fields": [{"name": "invoice_number", "description": "The invoice identification number"}, {"name": "date", "description": "The invoice date"}]}'></textarea>
-                                        <div class="form-text">Define specific fields to extract in JSON format</div>
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <label class="form-label mb-0">Fields to Extract</label>
+                                            <div>
+                                                <button type="button" class="btn btn-sm btn-outline-secondary" id="toggle-json-view">
+                                                    <span class="json-view-text">Show JSON</span>
+                                                </button>
+                                                <button type="button" class="btn btn-sm btn-outline-primary ms-2" id="add-field-btn">
+                                                    <i class="fas fa-plus"></i> Add Field
+                                                </button>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- User-friendly field builder interface -->
+                                        <div id="fields-builder" class="mb-3">
+                                            <div class="alert alert-info mb-3">
+                                                <small>Add fields you want to extract from the document. Each field needs a name and optional description.</small>
+                                            </div>
+                                            <div id="fields-container">
+                                                <!-- Fields will be added here dynamically -->
+                                                <div class="text-center text-muted py-4" id="no-fields-message">
+                                                    <p>No fields added yet. Click "Add Field" to start.</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Hidden JSON schema textarea -->
+                                        <div id="json-schema-container" class="d-none">
+                                            <textarea class="form-control" id="extraction-schema" name="extraction_schema" rows="8" placeholder='{"fields": [{"name": "invoice_number", "description": "The invoice identification number"}, {"name": "date", "description": "The invoice date"}]}'></textarea>
+                                            <div class="form-text">Schema in JSON format (advanced)</div>
+                                        </div>
                                     </div>
                                     
                                     <div class="d-grid">

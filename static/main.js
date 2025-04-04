@@ -14,6 +14,14 @@ document.addEventListener('DOMContentLoaded', function() {
     const copyJsonBtn = document.getElementById('copy-json-btn');
     const schemaInput = document.getElementById('extraction-schema');
     
+    // Field builder elements
+    const fieldsContainer = document.getElementById('fields-container');
+    const addFieldBtn = document.getElementById('add-field-btn');
+    const toggleJsonViewBtn = document.getElementById('toggle-json-view');
+    const jsonSchemaContainer = document.getElementById('json-schema-container');
+    const fieldsBuilder = document.getElementById('fields-builder');
+    const noFieldsMessage = document.getElementById('no-fields-message');
+    
     // Table extraction elements
     const tablesForm = document.getElementById('tables-form');
     const tablesFileInput = document.getElementById('tables-file');
@@ -25,6 +33,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Store the extracted data for copy functionality
     let extractedData = null;
+    let fieldCount = 0;
     
     // Handle form submission
     uploadForm.addEventListener('submit', function(event) {
@@ -516,4 +525,189 @@ document.addEventListener('DOMContentLoaded', function() {
         tablesLoadingSpinner.classList.add('d-none');
         loadingOverlay.classList.add('d-none');
     }
+    
+    /*
+     * Field Builder Functionality
+     */
+    
+    // Toggle between JSON view and field builder
+    toggleJsonViewBtn.addEventListener('click', function() {
+        const jsonViewText = this.querySelector('.json-view-text');
+        
+        if (jsonSchemaContainer.classList.contains('d-none')) {
+            // Show JSON view
+            jsonSchemaContainer.classList.remove('d-none');
+            fieldsBuilder.classList.add('d-none');
+            jsonViewText.textContent = 'Hide JSON';
+            // Update JSON based on fields
+            updateSchemaFromFields();
+        } else {
+            // Show field builder
+            jsonSchemaContainer.classList.add('d-none');
+            fieldsBuilder.classList.remove('d-none');
+            jsonViewText.textContent = 'Show JSON';
+            // Update fields based on JSON
+            try {
+                updateFieldsFromSchema();
+            } catch (e) {
+                showAlert('danger', 'Invalid schema format: ' + e.message);
+            }
+        }
+    });
+    
+    // Add field button click handler
+    addFieldBtn.addEventListener('click', function() {
+        addField();
+    });
+    
+    // Add a new field to the builder
+    function addField(name = '', description = '') {
+        // Hide the "no fields" message
+        noFieldsMessage.classList.add('d-none');
+        
+        // Increment field count
+        fieldCount++;
+        
+        // Create field container
+        const fieldItem = document.createElement('div');
+        fieldItem.className = 'field-item';
+        fieldItem.dataset.fieldIndex = fieldCount;
+        
+        // Create field header with controls
+        const fieldHeader = document.createElement('div');
+        fieldHeader.className = 'field-header';
+        
+        const fieldTitle = document.createElement('div');
+        fieldTitle.innerHTML = `<span class="field-number">${fieldCount}</span> Field`;
+        
+        const fieldControls = document.createElement('div');
+        fieldControls.className = 'field-controls';
+        
+        // Delete button
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'btn btn-outline-danger btn-sm';
+        deleteBtn.innerHTML = '<i class="fas fa-trash"></i>';
+        deleteBtn.addEventListener('click', () => {
+            fieldItem.remove();
+            updateSchemaFromFields();
+            
+            // Show "no fields" message if no fields remain
+            if (fieldsContainer.querySelectorAll('.field-item').length === 0) {
+                noFieldsMessage.classList.remove('d-none');
+            }
+        });
+        
+        fieldControls.appendChild(deleteBtn);
+        fieldHeader.appendChild(fieldTitle);
+        fieldHeader.appendChild(fieldControls);
+        fieldItem.appendChild(fieldHeader);
+        
+        // Field name input
+        const nameInput = document.createElement('input');
+        nameInput.type = 'text';
+        nameInput.className = 'form-control';
+        nameInput.placeholder = 'Field name (required)';
+        nameInput.value = name;
+        nameInput.dataset.fieldProp = 'name';
+        nameInput.addEventListener('input', updateSchemaFromFields);
+        
+        // Field description input
+        const descInput = document.createElement('input');
+        descInput.type = 'text';
+        descInput.className = 'form-control';
+        descInput.placeholder = 'Description (optional)';
+        descInput.value = description;
+        descInput.dataset.fieldProp = 'description';
+        descInput.addEventListener('input', updateSchemaFromFields);
+        
+        // Add inputs to the field item
+        fieldItem.appendChild(nameInput);
+        fieldItem.appendChild(descInput);
+        
+        // Add the field item to the container
+        fieldsContainer.appendChild(fieldItem);
+        
+        // Update the schema JSON
+        updateSchemaFromFields();
+        
+        // Focus on the name input
+        nameInput.focus();
+    }
+    
+    // Update the schema JSON from field inputs
+    function updateSchemaFromFields() {
+        const fields = [];
+        const fieldItems = fieldsContainer.querySelectorAll('.field-item');
+        
+        fieldItems.forEach((item) => {
+            const nameInput = item.querySelector('input[data-field-prop="name"]');
+            const descInput = item.querySelector('input[data-field-prop="description"]');
+            
+            // Only add fields with a name
+            if (nameInput.value.trim()) {
+                fields.push({
+                    name: nameInput.value.trim(),
+                    description: descInput.value.trim()
+                });
+            }
+        });
+        
+        // Update the schema textarea
+        const schema = {
+            fields: fields
+        };
+        
+        schemaInput.value = fields.length > 0 ? JSON.stringify(schema, null, 2) : '';
+    }
+    
+    // Update field inputs from schema JSON
+    function updateFieldsFromSchema() {
+        // Clear existing fields
+        fieldsContainer.innerHTML = '';
+        fieldCount = 0;
+        
+        // Try to parse the schema
+        if (schemaInput.value.trim()) {
+            const schema = JSON.parse(schemaInput.value);
+            
+            if (schema.fields && Array.isArray(schema.fields)) {
+                // Add fields from schema
+                schema.fields.forEach(field => {
+                    addField(field.name || '', field.description || '');
+                });
+                
+                // Hide "no fields" message if we have fields
+                if (schema.fields.length > 0) {
+                    noFieldsMessage.classList.add('d-none');
+                } else {
+                    noFieldsMessage.classList.remove('d-none');
+                }
+            }
+        } else {
+            // Show "no fields" message
+            noFieldsMessage.classList.remove('d-none');
+        }
+    }
+    
+    // Add example fields button
+    const exampleFieldsBtn = document.createElement('button');
+    exampleFieldsBtn.type = 'button';
+    exampleFieldsBtn.className = 'btn btn-sm btn-outline-secondary mt-2';
+    exampleFieldsBtn.textContent = 'Add Example Fields';
+    exampleFieldsBtn.addEventListener('click', function() {
+        // Clear existing fields
+        fieldsContainer.innerHTML = '';
+        fieldCount = 0;
+        
+        // Add some example fields
+        addField('invoice_number', 'The invoice identification number');
+        addField('date', 'The invoice date');
+        addField('total_amount', 'The total amount due');
+        addField('customer', 'Customer name and details');
+        addField('items', 'List of items, quantities and prices');
+    });
+    
+    // Insert the button after the fields container
+    fieldsContainer.parentNode.appendChild(exampleFieldsBtn);
 });
