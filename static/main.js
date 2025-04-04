@@ -283,7 +283,20 @@ document.addEventListener('DOMContentLoaded', function() {
             method: 'POST',
             body: formData
         })
-        .then(response => response.json())
+        .then(response => {
+            // Check if response is OK
+            if (!response.ok) {
+                throw new Error(`Server responded with status ${response.status}`);
+            }
+            
+            // Check for timeout or other errors
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                throw new Error('Server response was not in JSON format. The operation might have timed out or encountered an error.');
+            }
+            
+            return response.json();
+        })
         .then(data => {
             // Store the data for copy functionality
             extractedTablesData = data;
@@ -305,13 +318,25 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .catch(error => {
             console.error('Error:', error);
-            showAlert('danger', 'Failed to process document: ' + error.message);
+            
+            // Show more user-friendly error message for timeout
+            if (error.message.includes('timed out') || error.message.includes('not in JSON format')) {
+                showAlert('danger', 'The table extraction process timed out. Please try with a smaller PDF document or fewer pages.');
+            } else {
+                showAlert('danger', 'Failed to process document: ' + error.message);
+            }
             
             // Reset table results area
             tablesResultsContainer.innerHTML = `
                 <div class="alert alert-danger">
                     <h4 class="alert-heading">Table Extraction Failed</h4>
-                    <p>${error.message || 'Unknown error occurred during processing'}</p>
+                    <p class="mb-0">The document processing may have timed out because:</p>
+                    <ul>
+                        <li>The PDF has too many pages</li>
+                        <li>The tables are too complex</li>
+                        <li>The server is currently busy</li>
+                    </ul>
+                    <p>Please try with a smaller PDF document (5 pages or fewer) for best results.</p>
                 </div>
             `;
         })

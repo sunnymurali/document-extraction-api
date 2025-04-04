@@ -218,12 +218,13 @@ def convert_pdf_page_to_base64(file_path: str, page_num: int = 0) -> str:
         raise
 
 
-def extract_tables_from_pdf(file_path: str) -> Dict[str, Any]:
+def extract_tables_from_pdf(file_path: str, max_pages: int = 5) -> Dict[str, Any]:
     """
     Extract tables from a PDF document using OpenAI's vision capabilities
     
     Args:
         file_path: Path to the PDF document
+        max_pages: Maximum number of pages to process (default: 5)
         
     Returns:
         Dictionary with extraction results including tables found in the document
@@ -239,11 +240,16 @@ def extract_tables_from_pdf(file_path: str) -> Dict[str, Any]:
         # List to store all tables
         all_tables = []
         
-        # Process each page (limit to 20 pages for performance)
-        page_limit = min(total_pages, 20)
+        # Process each page (limit to max_pages for performance)
+        page_limit = min(total_pages, max_pages)
+        
+        # Process pages with progress logging
+        logger.info(f"Starting table extraction from {page_limit} pages out of {total_pages} total pages")
         
         for page_num in range(page_limit):
             try:
+                logger.info(f"Processing page {page_num + 1} of {page_limit}")
+                
                 # Convert the page to base64
                 base64_image = convert_pdf_page_to_base64(file_path, page_num)
                 
@@ -283,16 +289,20 @@ def extract_tables_from_pdf(file_path: str) -> Dict[str, Any]:
                 response_data = json.loads(response_content)
                 
                 # Add page number info to the tables
+                tables_found = 0
                 for table in response_data:
                     if isinstance(table, dict):
                         table["page_number"] = page_num + 1
                         all_tables.append(table)
+                        tables_found += 1
                 
-                logger.info(f"Processed page {page_num + 1}, found {len(response_data)} tables")
+                logger.info(f"Processed page {page_num + 1}, found {tables_found} tables")
                 
             except Exception as e:
                 logger.warning(f"Error processing page {page_num + 1}: {str(e)}")
                 continue
+        
+        logger.info(f"Table extraction complete. Found {len(all_tables)} tables across {page_limit} pages.")
         
         return {
             "success": True,
@@ -307,12 +317,13 @@ def extract_tables_from_pdf(file_path: str) -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-def extract_tables_from_binary_data(file_content: bytes) -> Dict[str, Any]:
+def extract_tables_from_binary_data(file_content: bytes, max_pages: int = 5) -> Dict[str, Any]:
     """
     Extract tables from binary document content
     
     Args:
         file_content: Binary content of the document
+        max_pages: Maximum number of pages to process (default: 5)
         
     Returns:
         Dictionary with extraction results including tables found in the document
@@ -324,8 +335,8 @@ def extract_tables_from_binary_data(file_content: bytes) -> Dict[str, Any]:
             tmp_path = tmp.name
         
         try:
-            # Extract tables from the temporary file
-            result = extract_tables_from_pdf(tmp_path)
+            # Extract tables from the temporary file with the specified max_pages
+            result = extract_tables_from_pdf(tmp_path, max_pages=max_pages)
             
             return result
         finally:

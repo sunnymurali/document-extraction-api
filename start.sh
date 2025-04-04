@@ -1,3 +1,3 @@
 #!/bin/bash
-# Start the FastAPI application using uvicorn (ASGI server)
-exec uvicorn app:app --host 0.0.0.0 --port 5000 --reload
+# Start the Flask application using Gunicorn with extended timeout
+exec gunicorn --bind 0.0.0.0:5000 --reuse-port --reload --timeout 120 main:app
