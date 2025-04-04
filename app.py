@@ -1,44 +1,47 @@
+"""
+FastAPI Application for PDF Data Extraction
+This API extracts structured data from PDF files using OpenAI models.
+"""
+
 import os
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+import json
 import tempfile
 import logging
-from pydantic import BaseModel
-from typing import Dict, Any, List, Optional
-import traceback
+from typing import Optional
 
-from utils.pdf_extractor import extract_text_from_pdf
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+import uvicorn
+
+from models import ExtractionResponse
+from utils.pdf_extractor import extract_text_from_pdf_with_fallback
 from utils.openai_service import extract_structured_data
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI
+# Create FastAPI application
 app = FastAPI(
-    title="PDF Data Extraction API",
+    title="PDF Data Extractor API",
     description="API for extracting structured data from PDF files using OpenAI",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Template directory
+# Set up templates
 templates = Jinja2Templates(directory="templates")
 
-class ExtractionResponse(BaseModel):
-    """Model for the extraction response"""
-    success: bool
-    data: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
-
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Serve the index page"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(
+        "index.html", {"request": request, "title": "PDF Data Extractor"}
+    )
 
 @app.post("/api/extract", response_model=ExtractionResponse)
 async def extract_data(
@@ -53,103 +56,87 @@ async def extract_data(
     
     Returns a JSON response with the extracted data
     """
+    # Validate file is a PDF
+    if not file.content_type or "pdf" not in file.content_type.lower():
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "error": "Uploaded file must be a PDF"}
+        )
+    
     try:
-        # Validate file type
-        if not file.filename.endswith('.pdf'):
-            raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+        # Process the file
+        contents = await file.read()
         
-        # Save the uploaded file temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
-            contents = await file.read()
-            temp_file.write(contents)
-            temp_file_path = temp_file.name
+        # Create a temporary file to process the PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(contents)
+            tmp_path = tmp.name
         
         try:
             # Extract text from PDF
-            logger.debug(f"Extracting text from {file.filename}")
-            extracted_text = extract_text_from_pdf(temp_file_path)
+            logger.info(f"Extracting text from PDF: {file.filename}")
+            pdf_text = extract_text_from_pdf_with_fallback(tmp_path)
             
-            if not extracted_text or extracted_text.strip() == "":
-                raise HTTPException(status_code=422, detail="Could not extract any text from the PDF file. The file might be encrypted, empty, or contain only images.")
+            if not pdf_text or pdf_text.isspace():
+                return JSONResponse(
+                    status_code=422,
+                    content={"success": False, "error": "Could not extract any text from the PDF file"}
+                )
             
-            # Process the extracted text with OpenAI
-            logger.debug("Sending text to OpenAI for structured extraction")
-            structured_data = extract_structured_data(extracted_text, extraction_schema)
+            # Extract structured data
+            logger.info("Extracting structured data with OpenAI")
+            extracted_data = extract_structured_data(pdf_text, extraction_schema)
             
-            return ExtractionResponse(success=True, data=structured_data)
-            
+            # Return successful response
+            return JSONResponse(
+                content={"success": True, "data": extracted_data}
+            )
         finally:
-            # Clean up the temporary file
-            os.unlink(temp_file_path)
-            
-    except HTTPException as e:
-        # Re-raise HTTP exceptions
-        raise
+            # Clean up temporary file
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    
     except Exception as e:
-        logger.error(f"Error during data extraction: {str(e)}")
-        logger.error(traceback.format_exc())
-        return ExtractionResponse(success=False, error=str(e))
+        logger.error(f"Error processing PDF: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": f"Error processing PDF: {str(e)}"}
+        )
 
-# API documentation endpoints
-@app.get("/api/docs")
+@app.get("/api/documentation")
 async def get_documentation():
     """Return API documentation"""
     return {
+        "api_version": "1.0.0",
         "endpoints": [
+            {
+                "path": "/",
+                "method": "GET",
+                "description": "Web interface for PDF data extraction"
+            },
             {
                 "path": "/api/extract",
                 "method": "POST",
-                "description": "Extract structured data from a PDF file",
+                "description": "Extract data from a PDF file",
                 "parameters": [
                     {
                         "name": "file",
                         "type": "file",
                         "required": True,
-                        "description": "The PDF file to extract data from"
+                        "description": "PDF file to extract data from"
                     },
                     {
                         "name": "extraction_schema",
-                        "type": "string",
+                        "type": "string (JSON)",
                         "required": False,
-                        "description": "Optional JSON schema describing the data structure to extract"
+                        "description": "Schema defining the data fields to extract"
                     }
-                ],
-                "response": {
-                    "success": "boolean",
-                    "data": "object (if success is true)",
-                    "error": "string (if success is false)"
-                }
-            }
-        ],
-        "examples": {
-            "basic_extraction": {
-                "description": "Basic extraction without schema",
-                "request": "POST /api/extract with PDF file upload",
-                "response": {
-                    "success": True,
-                    "data": {
-                        "extracted_fields": "Will depend on the PDF content"
-                    }
-                }
+                ]
             },
-            "schema_extraction": {
-                "description": "Extraction with a specific schema",
-                "request": "POST /api/extract with PDF file upload and schema",
-                "schema_example": {
-                    "fields": [
-                        {"name": "invoice_number", "type": "string", "description": "The invoice number"},
-                        {"name": "date", "type": "date", "description": "The invoice date"},
-                        {"name": "total_amount", "type": "number", "description": "The total invoice amount"}
-                    ]
-                },
-                "response": {
-                    "success": True,
-                    "data": {
-                        "invoice_number": "INV-12345",
-                        "date": "2023-04-15",
-                        "total_amount": 1234.56
-                    }
-                }
+            {
+                "path": "/api/documentation",
+                "method": "GET",
+                "description": "API documentation"
             }
-        }
+        ]
     }

@@ -1,65 +1,58 @@
-/* Additional styles on top of Bootstrap */
-pre {
+/* Custom styles for PDF Data Extractor */
+
+.json-result {
+    max-height: 600px;
+    overflow-y: auto;
     background-color: var(--bs-dark);
-    border-radius: 0.25rem;
+    border-radius: 0.375rem;
+}
+
+.json-result pre {
+    margin-bottom: 0;
     padding: 1rem;
-    font-size: 0.9rem;
-    overflow-x: auto;
-}
-
-.json-key {
-    color: var(--bs-info);
-}
-
-.json-value {
-    color: var(--bs-warning);
-}
-
-.json-string {
-    color: var(--bs-success);
-}
-
-.json-number {
-    color: var(--bs-danger);
-}
-
-.json-boolean {
-    color: var(--bs-primary);
-}
-
-.json-null {
-    color: var(--bs-secondary);
-}
-
-.spinner-container {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.empty-state {
-    color: var(--bs-secondary);
-}
-
-#results-container {
-    min-height: 300px;
-}
-
-#json-viewer {
-    background-color: var(--bs-dark);
-    border-radius: 0.25rem;
-    padding: 1rem;
-    overflow-x: auto;
-    min-height: 300px;
-    white-space: pre-wrap;
 }
 
 .card {
-    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin-bottom: 1.5rem;
 }
 
-.footer {
-    margin-top: 2rem;
-    padding: 1rem 0;
-    background-color: var(--bs-dark);
+.card-header {
+    background-color: rgba(255, 255, 255, 0.05);
+    border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Custom scrollbar for code blocks */
+.json-result::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.json-result::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+}
+
+.json-result::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+}
+
+.json-result::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Icons in the template */
+.bi {
+    display: inline-block;
+    vertical-align: -0.125em;
+}
+
+.bi-info-circle::before {
+    content: "ℹ";
+}
+
+.bi-file-earmark-text::before {
+    content: "📄";
 }

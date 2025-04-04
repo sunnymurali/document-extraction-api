@@ -1,15 +1,20 @@
-import logging
+"""
+PDF Text Extraction Module
+This module provides functions to extract text from PDF files.
+"""
+
+import os
+import io
 import PyPDF2
 from typing import Optional
 
-logger = logging.getLogger(__name__)
 
-def extract_text_from_pdf(pdf_path: str) -> str:
+def extract_text_from_pdf(pdf_file) -> str:
     """
     Extract text from a PDF file.
     
     Args:
-        pdf_path: Path to the PDF file
+        pdf_file: File-like object containing PDF data
         
     Returns:
         Extracted text as a string
@@ -18,48 +23,25 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         Exception: If there was an error extracting text from the PDF
     """
     try:
-        logger.debug(f"Opening PDF file: {pdf_path}")
+        reader = PyPDF2.PdfReader(pdf_file)
         text = ""
         
-        # Open the PDF file with PyPDF2
-        with open(pdf_path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
+        for page_num in range(len(reader.pages)):
+            page = reader.pages[page_num]
+            text += page.extract_text() or ""
+            text += "\n\n"  # Add spacing between pages
             
-            # Check if the PDF is encrypted
-            if pdf_reader.is_encrypted:
-                logger.warning("PDF is encrypted. Attempting to decrypt with empty password.")
-                try:
-                    pdf_reader.decrypt('')  # Try with empty password
-                except:
-                    raise Exception("The PDF file is encrypted and could not be decrypted.")
-            
-            # Get total number of pages
-            num_pages = len(pdf_reader.pages)
-            logger.debug(f"PDF has {num_pages} pages")
-            
-            if num_pages == 0:
-                return ""
-            
-            # Extract text from each page
-            for page_num in range(num_pages):
-                page = pdf_reader.pages[page_num]
-                page_text = page.extract_text()
-                text += page_text + "\n"
-        
-        logger.debug(f"Extracted {len(text)} characters of text")
-        return text
-    
+        return text.strip()
     except Exception as e:
-        logger.error(f"Error extracting text from PDF: {str(e)}")
-        raise Exception(f"Failed to extract text from PDF: {str(e)}")
+        raise Exception(f"Error extracting text from PDF: {str(e)}")
 
 
-def extract_text_from_pdf_with_fallback(pdf_path: str) -> str:
+def extract_text_from_pdf_with_fallback(pdf_file) -> str:
     """
     Extract text from a PDF file with fallback methods if PyPDF2 fails.
     
     Args:
-        pdf_path: Path to the PDF file
+        pdf_file: File-like object containing PDF data
         
     Returns:
         Extracted text as a string
@@ -68,23 +50,7 @@ def extract_text_from_pdf_with_fallback(pdf_path: str) -> str:
         Exception: If all extraction methods fail
     """
     try:
-        # First try with PyPDF2
-        return extract_text_from_pdf(pdf_path)
-    except Exception as e:
-        logger.warning(f"PyPDF2 extraction failed: {str(e)}")
-        
-        try:
-            # Try with pdfplumber as fallback (if available)
-            import pdfplumber
-            text = ""
-            with pdfplumber.open(pdf_path) as pdf:
-                for page in pdf.pages:
-                    text += page.extract_text() or ""
-                    text += "\n"
-            return text
-        except ImportError:
-            logger.error("pdfplumber not installed for fallback")
-            raise Exception("Primary PDF extraction failed and pdfplumber is not installed as fallback")
-        except Exception as e2:
-            logger.error(f"All PDF extraction methods failed: {str(e2)}")
-            raise Exception(f"Failed to extract text from PDF using multiple methods. Last error: {str(e2)}")
+        return extract_text_from_pdf(pdf_file)
+    except Exception as main_error:
+        # Could implement additional extraction methods here if needed
+        raise Exception(f"Failed to extract text from PDF: {str(main_error)}")

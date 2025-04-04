@@ -1,47 +1,48 @@
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="dark">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF Data Extraction API</title>
-    <link href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <title>PDF Data Extractor</title>
+    <link rel="stylesheet" href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css">
     <link rel="stylesheet" href="/static/main.css">
 </head>
-<body>
-    <div class="container py-4">
-        <header class="pb-3 mb-4 border-bottom">
-            <h1 class="display-5 fw-bold">
-                <i class="bi bi-file-earmark-pdf"></i> PDF Data Extraction API
-            </h1>
-            <p class="lead">Extract structured data from PDFs using OpenAI</p>
+<body data-bs-theme="dark">
+    <div class="container">
+        <header class="py-4 mb-4">
+            <div class="text-center">
+                <h1 class="mb-0">PDF Data Extractor</h1>
+                <p class="lead text-secondary">Extract structured data from your PDF documents using AI</p>
+            </div>
         </header>
 
         <div class="row">
-            <div class="col-lg-7">
+            <div class="col-md-6">
                 <div class="card mb-4">
                     <div class="card-header">
-                        <h4>Upload PDF</h4>
+                        <h5 class="mb-0">Upload PDF</h5>
                     </div>
                     <div class="card-body">
-                        <form id="extraction-form" enctype="multipart/form-data">
+                        <form id="uploadForm">
                             <div class="mb-3">
-                                <label for="pdfFile" class="form-label">Select PDF File</label>
-                                <input class="form-control" type="file" id="pdfFile" name="file" accept=".pdf" required>
-                                <div class="form-text">Upload a PDF file to extract structured data.</div>
+                                <label for="pdfFile" class="form-label">PDF File</label>
+                                <input class="form-control" type="file" id="pdfFile" accept=".pdf" required>
                             </div>
-                            
                             <div class="mb-3">
-                                <label for="extractionSchema" class="form-label">Extraction Schema (Optional)</label>
-                                <textarea class="form-control" id="extractionSchema" name="extractionSchema" rows="8" placeholder='{"fields": [{"name": "invoice_number", "type": "string"}, {"name": "date", "type": "date"}]}'></textarea>
-                                <div class="form-text">
-                                    Provide a JSON schema to guide the extraction. Leave empty for automatic extraction.
-                                </div>
+                                <label for="extractionSchema" class="form-label">
+                                    Extraction Schema (Optional)
+                                    <span class="form-text ms-1" data-bs-toggle="tooltip" 
+                                        title="Specify the data fields you want to extract in JSON format or plain text.">
+                                        <i class="bi bi-info-circle"></i>
+                                    </span>
+                                </label>
+                                <textarea class="form-control" id="extractionSchema" rows="4" placeholder='Example: {"fields": [{"name": "invoice_number"}, {"name": "date"}, {"name": "total_amount"}]}'></textarea>
+                                <div class="form-text">Specify what information you want to extract from the PDF.</div>
                             </div>
-                            
-                            <div class="d-grid gap-2">
-                                <button class="btn btn-primary" type="submit" id="extract-button">
-                                    <i class="bi bi-magic"></i> Extract Data
+                            <div class="d-grid">
+                                <button type="submit" class="btn btn-primary">
+                                    <span class="spinner-border spinner-border-sm d-none" id="loadingSpinner" role="status" aria-hidden="true"></span>
+                                    Extract Data
                                 </button>
                             </div>
                         </form>
@@ -50,80 +51,54 @@
                 
                 <div class="card">
                     <div class="card-header">
-                        <h4>API Documentation</h4>
+                        <h5 class="mb-0">API Documentation</h5>
                     </div>
                     <div class="card-body">
-                        <h5>POST /api/extract</h5>
-                        <p>Upload a PDF and extract structured data.</p>
-                        
-                        <h6>Request</h6>
-                        <ul>
-                            <li><strong>file</strong>: PDF file (multipart/form-data)</li>
-                            <li><strong>extractionSchema</strong>: Optional JSON schema (form field)</li>
-                        </ul>
-                        
-                        <h6>Response</h6>
-                        <pre><code>{
-  "success": true,
-  "data": {
-    // Extracted structured data
-  }
-}</code></pre>
-                        
-                        <h6>Example Schema</h6>
+                        <p>This tool provides a REST API to extract data from PDFs:</p>
+                        <pre><code>POST /api/extract
+Content-Type: multipart/form-data
+
+file: [PDF File]
+extraction_schema: (optional) JSON schema</code></pre>
+                        <p>Example schema:</p>
                         <pre><code>{
   "fields": [
-    {"name": "invoice_number", "type": "string", "description": "The invoice number"},
-    {"name": "date", "type": "date", "description": "The invoice date"},
-    {"name": "total_amount", "type": "number", "description": "The total invoice amount"}
+    {"name": "invoice_number"},
+    {"name": "date"},
+    {"name": "total_amount"}
   ]
 }</code></pre>
+                        <p><a href="/api/docs" target="_blank">View complete API docs</a></p>
                     </div>
                 </div>
             </div>
             
-            <div class="col-lg-5">
-                <div class="card mb-4">
+            <div class="col-md-6">
+                <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                        <h4>Results</h4>
-                        <button class="btn btn-sm btn-outline-secondary" id="copy-results" disabled>
-                            <i class="bi bi-clipboard"></i> Copy
-                        </button>
+                        <h5 class="mb-0">Extraction Results</h5>
+                        <button class="btn btn-sm btn-outline-secondary" id="resetButton" disabled>Clear</button>
                     </div>
                     <div class="card-body">
-                        <div id="results-container">
-                            <div class="empty-state text-center p-5">
-                                <i class="bi bi-file-earmark-text display-1 text-secondary mb-3"></i>
-                                <p class="lead">Extracted data will appear here</p>
-                                <p class="text-muted">Upload a PDF and click "Extract Data"</p>
+                        <div id="results">
+                            <div class="text-center text-secondary p-5">
+                                <div class="mb-3">
+                                    <i class="bi bi-file-earmark-text" style="font-size: 3rem;"></i>
+                                </div>
+                                <p>Upload a PDF file to see the extracted data here.</p>
                             </div>
                         </div>
-                        <div id="json-viewer" class="d-none"></div>
                     </div>
                 </div>
-                
-                <div class="alert alert-info">
-                    <h5><i class="bi bi-info-circle"></i> How it works</h5>
-                    <ol>
-                        <li>Upload your PDF document</li>
-                        <li>Optionally provide a schema to guide extraction</li>
-                        <li>Our API extracts text from the PDF</li>
-                        <li>OpenAI analyzes the content and structures the data</li>
-                        <li>Receive structured JSON data in response</li>
-                    </ol>
-                </div>
-                
-                <div id="status-container"></div>
             </div>
+        </div>
+        
+        <div class="alert-container position-fixed bottom-0 end-0 p-3" style="z-index: 5">
+            <!-- Alerts will be inserted here by JavaScript -->
         </div>
     </div>
 
-    <footer class="footer mt-5 py-3 bg-dark">
-        <div class="container text-center">
-            <span class="text-muted">PDF Data Extraction API | Powered by FastAPI and OpenAI</span>
-        </div>
-    </footer>
-
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/static/main.js"></script>
 </body>
 </html>

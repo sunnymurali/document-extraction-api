@@ -1,6 +1,8 @@
-import os
-import sys
+"""
+ASGI entry point for the FastAPI application
+"""
+
 from app import app
 
-# For running with gunicorn and uvicorn.workers.UvicornWorker
+# Make the application importable for ASGI servers
 application = app

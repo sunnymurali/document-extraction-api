@@ -1,1 +1,3 @@
-# Init file to make utils a proper package
+"""
+Utilities package for PDF Data Extractor
+"""

@@ -1,17 +1,18 @@
-import json
-import os
-import logging
-from typing import Optional, Dict, Any
+"""
+OpenAI Service for Data Extraction
+This module provides functions to extract structured data from text using OpenAI.
+"""
 
-# the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
-# do not change this unless explicitly requested by the user
+import os
+import json
+import logging
+from typing import Dict, Any, Optional, List
+
+import openai
 from openai import OpenAI
 
-logger = logging.getLogger(__name__)
-
-# Initialize OpenAI client
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-openai = OpenAI(api_key=OPENAI_API_KEY)
+# Initialize OpenAI client with API key
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 def extract_structured_data(text: str, schema: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -28,59 +29,62 @@ def extract_structured_data(text: str, schema: Optional[str] = None) -> Dict[str
         Exception: If there was an error during extraction
     """
     try:
-        # Truncate text if it's too long
-        max_text_length = 16000  # A conservative limit
-        if len(text) > max_text_length:
-            logger.warning(f"Text is too long ({len(text)} chars), truncating to {max_text_length}")
-            text = text[:max_text_length] + "...[text truncated due to length]"
+        # If text is too long, truncate it to avoid exceeding token limits
+        if len(text) > 15000:
+            text = text[:15000] + "...(truncated)"
         
-        # Create the system message based on whether a schema was provided
+        # Prepare system message with extraction instructions
+        system_message = """You are a data extraction assistant that extracts structured information from text.
+Extract the information as a valid JSON object according to the schema provided.
+If a field cannot be found in the text, use null as the value. Do not make up information."""
+        
+        # Add schema instructions if provided
         if schema:
             try:
-                # Parse the schema to validate it's proper JSON
                 schema_obj = json.loads(schema)
-                schema_str = json.dumps(schema_obj, indent=2)
-                system_content = (
-                    "You are a data extraction expert. Extract structured data from the provided PDF text "
-                    f"according to this schema: {schema_str}. "
-                    "Return ONLY a valid JSON object with the extracted data. "
-                    "If you cannot find certain fields, use null for those fields."
-                )
-            except json.JSONDecodeError:
-                # If schema is not valid JSON, treat it as a text description
-                system_content = (
-                    "You are a data extraction expert. Extract structured data from the provided PDF text "
-                    f"according to this description: {schema}. "
-                    "Return ONLY a valid JSON object with the extracted data. "
-                    "If you cannot find certain fields, use null for those fields."
-                )
+                # Convert schema to a readable format for the model
+                schema_desc = "Extract the following fields:\n"
+                for field in schema_obj.get("fields", []):
+                    field_name = field.get("name", "")
+                    field_desc = field.get("description", "")
+                    schema_desc += f"- {field_name}: {field_desc}\n"
+                system_message += f"\n\n{schema_desc}"
+            except:
+                # If schema parsing fails, just use a generic extraction instruction
+                system_message += "\n\nExtract all relevant information from the document."
         else:
-            # No schema provided, use a general extraction prompt
-            system_content = (
-                "You are a data extraction expert. Analyze the provided PDF text and extract all relevant "
-                "data points into a structured format. Identify key fields like names, dates, addresses, "
-                "numbers, and any domain-specific information. "
-                "Return ONLY a valid JSON object with the extracted data, grouped by logical categories. "
-                "Use clear, concise field names."
-            )
+            # Default extraction without schema
+            system_message += """
+Extract the following common fields (if present):
+- name: The full name of a person or entity
+- date: Any relevant dates (e.g., invoice date, birth date)
+- address: Complete address information
+- phone: Phone number
+- email: Email address
+- total_amount: Any monetary total
+- items: List of items with descriptions and prices
+- any other key information present in the document"""
         
-        logger.debug("Sending request to OpenAI API")
-        response = openai.chat.completions.create(
-            model="gpt-4o",  # Using the latest model as per blueprint guidelines
+        # Make the API call to OpenAI
+        # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
+        # do not change this unless explicitly requested by the user
+        response = client.chat.completions.create(
+            model="gpt-4o",
             messages=[
-                {"role": "system", "content": system_content},
+                {"role": "system", "content": system_message},
                 {"role": "user", "content": text}
             ],
             response_format={"type": "json_object"},
-            temperature=0.3,  # Lower temperature for more deterministic outputs
+            temperature=0.1,  # Lower temperature for more deterministic outputs
+            max_tokens=1000
         )
         
-        # Extract the JSON response
-        json_response = json.loads(response.choices[0].message.content)
-        logger.debug("Successfully received structured data from OpenAI")
+        # Extract the response content
+        response_content = response.choices[0].message.content
         
-        return json_response
+        # Parse and return the JSON response
+        return json.loads(response_content)
     
     except Exception as e:
-        logger.error(f"Error extracting structured data: {str(e)}")
-        raise Exception(f"Failed to extract structured data: {str(e)}")
+        logging.error(f"Error in OpenAI extraction: {str(e)}")
+        raise Exception(f"Failed to extract data: {str(e)}")
