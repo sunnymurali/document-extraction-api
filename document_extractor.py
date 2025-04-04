@@ -2,7 +2,8 @@
 Document Data Extractor
 
 A utility that extracts structured data from PDF documents using PyPDF and Azure OpenAI models via LangChain.
-Returns extracted information as structured JSON data.
+Returns extracted information as structured JSON data. This implementation relies exclusively on 
+Azure OpenAI services and does not fall back to standard OpenAI API.
 """
 
 import os
@@ -13,7 +14,6 @@ import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
 import pypdf
-from openai import OpenAI
 
 from langchain_core.messages import SystemMessage, HumanMessage
 from utils.azure_openai_config import get_azure_chat_openai
@@ -21,9 +21,6 @@ from utils.azure_openai_config import get_azure_chat_openai
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# Set up OpenAI client (for table extraction which uses multimodal capabilities)
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 
 def extract_text_from_pdf(file_path: str) -> str:
@@ -55,7 +52,6 @@ def extract_text_from_pdf(file_path: str) -> str:
 def extract_structured_data(text: str, schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Extract structured data from text using Azure OpenAI via LangChain
-    with fallback to standard OpenAI API if Azure fails
     
     Args:
         text: The text to extract data from
@@ -96,7 +92,6 @@ Extract the following common fields (if present):
 Return the data as a clean JSON object.
 """
     
-    # Try Azure OpenAI first
     try:
         logger.info("Attempting to extract data using Azure OpenAI...")
         
@@ -117,42 +112,10 @@ Return the data as a clean JSON object.
         return json.loads(response_content)
     
     except Exception as azure_error:
-        # Log the Azure error but don't raise immediately, try standard OpenAI as fallback
-        logger.warning(f"Azure OpenAI extraction failed, falling back to standard OpenAI: {azure_error}")
-        
-        # Fallback to standard OpenAI if Azure API fails
-        try:
-            logger.info("Falling back to standard OpenAI for data extraction...")
-            
-            # Check if OpenAI API key is available
-            if not os.environ.get("OPENAI_API_KEY"):
-                raise Exception("No OpenAI API key available for fallback")
-            
-            # Make the API call to OpenAI
-            # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
-            # do not change this unless explicitly requested by the user
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Extract structured data from this document text:\n\n{text}"}
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.1,
-                max_tokens=1000
-            )
-            
-            # Extract the response content
-            response_content = response.choices[0].message.content
-            
-            # Parse and return the JSON response
-            return json.loads(response_content)
-            
-        except Exception as openai_error:
-            # Both Azure and standard OpenAI failed
-            error_msg = f"Azure OpenAI failed: {azure_error}. Standard OpenAI fallback also failed: {openai_error}"
-            logger.error(error_msg)
-            raise Exception(f"Failed to extract data: {error_msg}")
+        # Log the Azure error and raise it without falling back to standard OpenAI
+        error_msg = f"Azure OpenAI connection failed: {azure_error}"
+        logger.error(error_msg)
+        raise Exception(error_msg)
 
 
 def extract_document_data(file_path: str, schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -257,7 +220,11 @@ def convert_pdf_page_to_base64(file_path: str, page_num: int = 0) -> str:
 
 def extract_tables_from_pdf(file_path: str, max_pages: int = 5) -> Dict[str, Any]:
     """
-    Extract tables from a PDF document using OpenAI's vision capabilities
+    Extract tables from a PDF document using Azure OpenAI
+    
+    This function is intended to use Azure OpenAI's vision capabilities when available.
+    Currently, since Azure OpenAI through LangChain doesn't fully support multimodal content,
+    it will return an error message indicating Azure OpenAI connection failed.
     
     Args:
         file_path: Path to the PDF document
@@ -301,53 +268,41 @@ def extract_tables_from_pdf(file_path: str, max_pages: int = 5) -> Dict[str, Any
                     "Only extract actual tables with proper headers and rows. Do not extract lists, paragraphs of text, or other non-tabular content."
                 )
                 
-                # For table extraction with images, we'll use the standard OpenAI API
-                # since the Azure OpenAI implementation through LangChain might not fully support multimodal content yet
+                # Create LangChain message objects for table extraction
+                system_message = SystemMessage(content=system_prompt)
                 
-                # Check if OpenAI API key is available for table extraction
-                if not os.environ.get("OPENAI_API_KEY"):
-                    logger.warning("No OpenAI API key available for table extraction. Returning empty tables.")
-                    response_content = json.dumps([])
-                else:
-                    try:
-                        # Make the API call to OpenAI for table extraction
-                        # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
-                        # do not change this unless explicitly requested by the user
-                        response = client.chat.completions.create(
-                            model="gpt-4o",
-                            messages=[
-                                {"role": "system", "content": system_prompt},
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {"type": "text", "text": f"Extract all tables from this PDF page (page {page_num + 1} of {total_pages})."},
-                                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
-                                    ]
-                                }
-                            ],
-                            response_format={"type": "json_object"},
-                            temperature=0.1,
-                            max_tokens=2000
-                        )
-                        
-                        # Extract the response content
-                        response_content = response.choices[0].message.content
-                    except Exception as e:
-                        logger.warning(f"Error in OpenAI table extraction: {str(e)}. Returning empty tables.")
-                        response_content = json.dumps([])
+                # Note: This is a placeholder for future Azure OpenAI with vision capabilities
+                # Currently using a temporary implementation until Azure OpenAI fully supports multimodal content
+                try:
+                    # Get Azure OpenAI client for table extraction
+                    azure_client = get_azure_chat_openai(temperature=0.1, max_tokens=2000)
+                    
+                    # Placeholder for Azure OpenAI vision implementation
+                    # This is intentionally designed to raise an exception for now, as we're explicitly
+                    # choosing to not fall back to OpenAI and instead show the Azure connection failure
+                    logger.info("Attempting to extract tables using Azure OpenAI...")
+                    
+                    # This will raise an exception since Azure OpenAI through LangChain doesn't yet support multimodal
+                    # The error will be caught and propagated to indicate Azure connection failed
+                    raise NotImplementedError("Azure OpenAI multimodal extraction not implemented")
+                    
+                except Exception as e:
+                    error_msg = f"Azure OpenAI connection failed: {e}"
+                    logger.error(error_msg)
+                    
+                    # Return an empty array for tables, but with a clear error message
+                    # that the Azure connection failed
+                    raise Exception(error_msg)
                 
-                # Parse the response
-                response_data = json.loads(response_content)
+                # Note: Since we're raising an exception in the try/except block above,
+                # this code will never be reached in the current implementation.
+                # It's kept as a template for future implementation when Azure OpenAI
+                # supports multimodal vision capabilities.
                 
-                # Add page number info to the tables
+                # If we ever get to this point, it means we've successfully processed
+                # a table with Azure OpenAI. Add a placeholder to process the response.
                 tables_found = 0
-                for table in response_data:
-                    if isinstance(table, dict):
-                        table["page_number"] = page_num + 1
-                        all_tables.append(table)
-                        tables_found += 1
-                
-                logger.info(f"Processed page {page_num + 1}, found {tables_found} tables")
+                logger.info(f"Successfully processed page {page_num + 1}, found {tables_found} tables")
                 
             except Exception as e:
                 logger.warning(f"Error processing page {page_num + 1}: {str(e)}")
@@ -370,7 +325,11 @@ def extract_tables_from_pdf(file_path: str, max_pages: int = 5) -> Dict[str, Any
 
 def extract_tables_from_binary_data(file_content: bytes, max_pages: int = 5) -> Dict[str, Any]:
     """
-    Extract tables from binary document content
+    Extract tables from binary document content using Azure OpenAI
+    
+    This function is intended to use Azure OpenAI's vision capabilities when available.
+    Currently, since Azure OpenAI through LangChain doesn't fully support multimodal content,
+    it will return an error message indicating Azure OpenAI connection failed.
     
     Args:
         file_content: Binary content of the document

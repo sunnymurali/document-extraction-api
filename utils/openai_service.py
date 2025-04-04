@@ -87,5 +87,6 @@ Extract the following common fields (if present):
         return json.loads(response_content)
     
     except Exception as e:
-        logger.error(f"Error in Azure OpenAI extraction: {str(e)}")
-        raise Exception(f"Failed to extract data: {str(e)}")
+        error_msg = f"Azure OpenAI connection failed: {str(e)}"
+        logger.error(error_msg)
+        raise Exception(error_msg)
