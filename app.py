@@ -1,142 +1,147 @@
 """
-FastAPI Application for PDF Data Extraction
-This API extracts structured data from PDF files using OpenAI models.
+Flask Application for Document Data Extraction
+This application provides a web interface and API endpoints for extracting structured data from documents.
 """
 
 import os
 import json
-import tempfile
 import logging
-from typing import Optional
+from flask import Flask, render_template, request, jsonify, send_from_directory
+from werkzeug.utils import secure_filename
 
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-import uvicorn
+# Import the document extractor
+from document_extractor import extract_from_binary_data, extract_document_data
 
-from models import ExtractionResponse
-from utils.pdf_extractor import extract_text_from_pdf_with_fallback
-from utils.openai_service import extract_structured_data
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Create FastAPI application
-app = FastAPI(
-    title="PDF Data Extractor API",
-    description="API for extracting structured data from PDF files using OpenAI",
-    version="1.0.0",
-)
+# Create Flask app
+app = Flask(__name__)
+app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
 
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Configure file upload settings
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'pdf', 'txt', 'doc', 'docx'}
+MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10MB limit
 
-# Set up templates
-templates = Jinja2Templates(directory="templates")
+# Ensure upload directory exists
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    """Serve the index page"""
-    return templates.TemplateResponse(
-        "index.html", {"request": request, "title": "PDF Data Extractor"}
-    )
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 
-@app.post("/api/extract", response_model=ExtractionResponse)
-async def extract_data(
-    file: UploadFile = File(...),
-    extraction_schema: Optional[str] = Form(None)
-):
+
+def allowed_file(filename):
+    """Check if file has an allowed extension"""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+@app.route('/')
+def index():
+    """Render the main page"""
+    return render_template('index.html')
+
+
+@app.route('/api/extract', methods=['POST'])
+def extract_data():
     """
-    Extract structured data from a PDF file
+    API endpoint to extract data from uploaded documents
     
-    - **file**: The PDF file to extract data from
-    - **extraction_schema**: Optional JSON schema describing the data to extract
+    Request: multipart/form-data with:
+    - file: The document file
+    - extraction_schema: (optional) JSON string defining extraction schema
     
-    Returns a JSON response with the extracted data
+    Response: JSON with extraction results
     """
-    # Validate file is a PDF
-    if not file.content_type or "pdf" not in file.content_type.lower():
-        return JSONResponse(
-            status_code=400,
-            content={"success": False, "error": "Uploaded file must be a PDF"}
-        )
+    # Check if a file was uploaded
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file uploaded'}), 400
+    
+    file = request.files['file']
+    
+    # Check if file was selected
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'No file selected'}), 400
+    
+    # Check file type
+    if not allowed_file(file.filename):
+        return jsonify({'success': False, 'error': f'Invalid file type. Allowed types: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
     
     try:
-        # Process the file
-        contents = await file.read()
+        # Parse extraction schema if provided
+        schema = None
+        if 'extraction_schema' in request.form and request.form['extraction_schema']:
+            try:
+                schema = json.loads(request.form['extraction_schema'])
+            except json.JSONDecodeError as e:
+                return jsonify({'success': False, 'error': f'Invalid schema format: {str(e)}'}), 400
         
-        # Create a temporary file to process the PDF
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(contents)
-            tmp_path = tmp.name
+        # Save the file
+        filename = secure_filename(file.filename)
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(file_path)
         
         try:
-            # Extract text from PDF
-            logger.info(f"Extracting text from PDF: {file.filename}")
-            pdf_text = extract_text_from_pdf_with_fallback(tmp_path)
+            # Handle text files directly (for testing purposes)
+            if filename.endswith('.txt'):
+                with open(file_path, 'r') as f:
+                    text = f.read()
+                
+                # For text files, we'll create a mock extraction result
+                # This is helpful for testing when PDF processing is not available
+                result = {
+                    'success': True,
+                    'data': {
+                        '_source': 'Text file direct extraction',
+                        'text_content': text[:500] + ('...' if len(text) > 500 else '')
+                    }
+                }
+                
+                if schema:
+                    # Use extract_structured_data for text files if we have a schema
+                    from document_extractor import extract_structured_data
+                    try:
+                        structured_data = extract_structured_data(text, schema)
+                        result['data'] = structured_data
+                    except Exception as e:
+                        logger.warning(f"Could not extract structured data from text: {e}")
+                        # Keep the default text preview if extraction fails
+            else:
+                # Process the uploaded file with our extractor
+                result = extract_document_data(file_path, schema)
             
-            if not pdf_text or pdf_text.isspace():
-                return JSONResponse(
-                    status_code=422,
-                    content={"success": False, "error": "Could not extract any text from the PDF file"}
-                )
-            
-            # Extract structured data
-            logger.info("Extracting structured data with OpenAI")
-            extracted_data = extract_structured_data(pdf_text, extraction_schema)
-            
-            # Return successful response
-            return JSONResponse(
-                content={"success": True, "data": extracted_data}
-            )
+            return jsonify(result)
+        
         finally:
-            # Clean up temporary file
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+            # Clean up the uploaded file
+            try:
+                if os.path.exists(file_path):
+                    os.unlink(file_path)
+            except Exception as e:
+                logger.error(f"Error removing temporary file: {e}")
     
     except Exception as e:
-        logger.error(f"Error processing PDF: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={"success": False, "error": f"Error processing PDF: {str(e)}"}
-        )
+        logger.error(f"Error in extraction process: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.get("/api/documentation")
-async def get_documentation():
-    """Return API documentation"""
-    return {
-        "api_version": "1.0.0",
-        "endpoints": [
-            {
-                "path": "/",
-                "method": "GET",
-                "description": "Web interface for PDF data extraction"
-            },
-            {
-                "path": "/api/extract",
-                "method": "POST",
-                "description": "Extract data from a PDF file",
-                "parameters": [
-                    {
-                        "name": "file",
-                        "type": "file",
-                        "required": True,
-                        "description": "PDF file to extract data from"
-                    },
-                    {
-                        "name": "extraction_schema",
-                        "type": "string (JSON)",
-                        "required": False,
-                        "description": "Schema defining the data fields to extract"
-                    }
-                ]
-            },
-            {
-                "path": "/api/documentation",
-                "method": "GET",
-                "description": "API documentation"
-            }
-        ]
-    }
+
+@app.route('/static/<path:path>')
+def serve_static(path):
+    """Serve static files"""
+    return send_from_directory('static', path)
+
+
+# Check if OpenAI API key is available
+# Using before_request instead of before_first_request (which is deprecated)
+@app.before_request
+def check_api_key():
+    # Use a flag to only log once
+    if not getattr(app, '_api_key_checked', False):
+        if not os.environ.get("OPENAI_API_KEY"):
+            logger.warning("OPENAI_API_KEY environment variable not set. Extraction functionality will not work correctly.")
+        app._api_key_checked = True
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)

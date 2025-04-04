@@ -1,0 +1,73 @@
+/**
+ * Document Data Extractor - Custom Styles
+ */
+
+/* JSON Syntax Highlighting */
+.json-display {
+    background-color: var(--bs-dark);
+    border-radius: 4px;
+    padding: 1rem;
+    font-family: 'Consolas', 'Monaco', monospace;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    overflow-x: auto;
+}
+
+.json-string {
+    color: #9ccc65;
+}
+
+.json-number {
+    color: #42a5f5;
+}
+
+.json-boolean {
+    color: #ffca28;
+}
+
+.json-null {
+    color: #ef5350;
+}
+
+.json-key {
+    color: #ec407a;
+}
+
+/* Loading Overlay */
+#loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.7);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 1050;
+}
+
+/* Results Container */
+.results-content {
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+/* Schema Textarea */
+#extraction-schema {
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.9rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .json-display {
+        font-size: 0.8rem;
+    }
+    
+    .card-body {
+        padding: 1rem;
+    }
+}

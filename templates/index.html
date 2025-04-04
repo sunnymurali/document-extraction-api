@@ -1,47 +1,42 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF Data Extractor</title>
+    <title>Document Data Extractor</title>
     <link rel="stylesheet" href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css">
-    <link rel="stylesheet" href="/static/main.css">
+    <link rel="stylesheet" href="/static/style.css">
 </head>
-<body data-bs-theme="dark">
-    <div class="container">
-        <header class="py-4 mb-4">
-            <div class="text-center">
-                <h1 class="mb-0">PDF Data Extractor</h1>
-                <p class="lead text-secondary">Extract structured data from your PDF documents using AI</p>
-            </div>
+<body>
+    <div class="container my-4">
+        <header class="mb-5 text-center">
+            <h1 class="display-4">Document Data Extractor</h1>
+            <p class="lead">Upload documents to extract structured data using AI</p>
         </header>
 
         <div class="row">
             <div class="col-md-6">
                 <div class="card mb-4">
                     <div class="card-header">
-                        <h5 class="mb-0">Upload PDF</h5>
+                        <h2 class="card-title h5 mb-0">Upload Document</h2>
                     </div>
                     <div class="card-body">
-                        <form id="uploadForm">
+                        <form id="upload-form" enctype="multipart/form-data">
                             <div class="mb-3">
-                                <label for="pdfFile" class="form-label">PDF File</label>
-                                <input class="form-control" type="file" id="pdfFile" accept=".pdf" required>
+                                <label for="document-file" class="form-label">Document File</label>
+                                <input type="file" class="form-control" id="document-file" name="file" accept=".pdf,.txt,.doc,.docx" required>
+                                <div class="form-text">Supported formats: PDF, TXT, DOC, DOCX (Max 10MB)</div>
                             </div>
+                            
                             <div class="mb-3">
-                                <label for="extractionSchema" class="form-label">
-                                    Extraction Schema (Optional)
-                                    <span class="form-text ms-1" data-bs-toggle="tooltip" 
-                                        title="Specify the data fields you want to extract in JSON format or plain text.">
-                                        <i class="bi bi-info-circle"></i>
-                                    </span>
-                                </label>
-                                <textarea class="form-control" id="extractionSchema" rows="4" placeholder='Example: {"fields": [{"name": "invoice_number"}, {"name": "date"}, {"name": "total_amount"}]}'></textarea>
-                                <div class="form-text">Specify what information you want to extract from the PDF.</div>
+                                <label for="extraction-schema" class="form-label">Extraction Schema (Optional)</label>
+                                <textarea class="form-control" id="extraction-schema" name="extraction_schema" rows="8" placeholder='{"fields": [{"name": "invoice_number", "description": "The invoice identification number"}, {"name": "date", "description": "The invoice date"}]}'></textarea>
+                                <div class="form-text">Define specific fields to extract in JSON format</div>
                             </div>
+                            
                             <div class="d-grid">
-                                <button type="submit" class="btn btn-primary">
-                                    <span class="spinner-border spinner-border-sm d-none" id="loadingSpinner" role="status" aria-hidden="true"></span>
+                                <button type="submit" class="btn btn-primary" id="extract-btn">
+                                    <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true" id="loading-spinner"></span>
                                     Extract Data
                                 </button>
                             </div>
@@ -49,26 +44,36 @@
                     </div>
                 </div>
                 
-                <div class="card">
+                <div class="card mb-4">
                     <div class="card-header">
-                        <h5 class="mb-0">API Documentation</h5>
+                        <h2 class="card-title h5 mb-0">Extraction Guide</h2>
                     </div>
                     <div class="card-body">
-                        <p>This tool provides a REST API to extract data from PDFs:</p>
-                        <pre><code>POST /api/extract
-Content-Type: multipart/form-data
-
-file: [PDF File]
-extraction_schema: (optional) JSON schema</code></pre>
-                        <p>Example schema:</p>
-                        <pre><code>{
+                        <p>This tool extracts structured data from documents using AI. It works best with:</p>
+                        <ul>
+                            <li>Invoices and receipts</li>
+                            <li>Business documents</li>
+                            <li>Forms and applications</li>
+                            <li>Contracts and agreements</li>
+                        </ul>
+                        <p><strong>Schema Format Example:</strong></p>
+                        <pre class="bg-dark p-2 rounded"><code>{
   "fields": [
-    {"name": "invoice_number"},
-    {"name": "date"},
-    {"name": "total_amount"}
+    {
+      "name": "invoice_number",
+      "description": "The invoice identification number"
+    },
+    {
+      "name": "date",
+      "description": "The invoice date"
+    },
+    {
+      "name": "total_amount",
+      "description": "The total amount due"
+    }
   ]
 }</code></pre>
-                        <p><a href="/api/docs" target="_blank">View complete API docs</a></p>
+                        <p class="mb-0">Without a schema, the system will extract common fields automatically.</p>
                     </div>
                 </div>
             </div>
@@ -76,16 +81,14 @@ extraction_schema: (optional) JSON schema</code></pre>
             <div class="col-md-6">
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0">Extraction Results</h5>
-                        <button class="btn btn-sm btn-outline-secondary" id="resetButton" disabled>Clear</button>
+                        <h2 class="card-title h5 mb-0">Extraction Results</h2>
+                        <button class="btn btn-sm btn-outline-secondary" id="copy-json-btn" disabled>Copy JSON</button>
                     </div>
                     <div class="card-body">
-                        <div id="results">
-                            <div class="text-center text-secondary p-5">
-                                <div class="mb-3">
-                                    <i class="bi bi-file-earmark-text" style="font-size: 3rem;"></i>
-                                </div>
-                                <p>Upload a PDF file to see the extracted data here.</p>
+                        <div id="results-container">
+                            <div class="text-center py-5 text-secondary">
+                                <i class="fas fa-file-alt fa-3x mb-3"></i>
+                                <p>Upload a document to see extraction results</p>
                             </div>
                         </div>
                     </div>
@@ -93,12 +96,29 @@ extraction_schema: (optional) JSON schema</code></pre>
             </div>
         </div>
         
-        <div class="alert-container position-fixed bottom-0 end-0 p-3" style="z-index: 5">
-            <!-- Alerts will be inserted here by JavaScript -->
+        <div class="alert alert-info alert-dismissible fade show mt-4" role="alert">
+            <h4 class="alert-heading">How it works</h4>
+            <p>This tool uses OpenAI's powerful language models to extract structured data from documents. It can identify and parse information from virtually any document format.</p>
+            <p>For best results, use documents with clear, well-formatted text. The extraction quality depends on the document's clarity and structure.</p>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Loading overlay -->
+    <div id="loading-overlay" class="d-none">
+        <div class="spinner-border text-light" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="mt-2 text-light">Processing document...</p>
+    </div>
+
+    <footer class="bg-dark text-center text-secondary py-3 mt-5">
+        <div class="container">
+            <p class="mb-0">Document Data Extractor &copy; 2025</p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/static/main.js"></script>
 </body>
 </html>

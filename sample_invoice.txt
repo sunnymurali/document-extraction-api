@@ -1,0 +1,43 @@
+INVOICE
+
+INVOICE #: INV-2025-0042
+DATE: April 4, 2025
+DUE DATE: May 4, 2025
+
+FROM:
+TechSolutions Inc.
+123 Innovation Way
+San Francisco, CA 94103
+Phone: (415) 555-1234
+Email: billing@techsolutions.example.com
+
+TO:
+Acme Corporation
+789 Business Ave.
+New York, NY 10001
+Contact: John Smith
+Phone: (212) 555-6789
+Email: john.smith@acme.example.com
+
+ITEMS:
+1. Web Application Development - $8,500.00
+   40 hours @ $150/hour + $2,500 for premium features
+   
+2. Cloud Infrastructure Setup - $2,200.00
+   10 hours @ $120/hour + $1,000 for enterprise configuration
+   
+3. Security Audit & Implementation - $1,800.00
+   12 hours @ $150/hour
+
+SUBTOTAL: $12,500.00
+TAX (8%): $1,000.00
+TOTAL: $13,500.00
+
+PAYMENT TERMS:
+Payment due within 30 days. Please make checks payable to TechSolutions Inc.
+or wire transfer to:
+Bank: Pacific National Bank
+Account: 987654321
+Routing: 123456789
+
+Thank you for your business!

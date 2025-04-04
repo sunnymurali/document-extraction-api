@@ -1,80 +1,111 @@
+/**
+ * Document Data Extractor
+ * Frontend JavaScript for handling document uploads and displaying results
+ */
+
 document.addEventListener('DOMContentLoaded', function() {
-    const uploadForm = document.getElementById('uploadForm');
-    const pdfFileInput = document.getElementById('pdfFile');
-    const extractionSchemaInput = document.getElementById('extractionSchema');
-    const resultsContainer = document.getElementById('results');
-    const resetButton = document.getElementById('resetButton');
-    const loadingSpinner = document.getElementById('loadingSpinner');
+    // Elements
+    const uploadForm = document.getElementById('upload-form');
+    const fileInput = document.getElementById('document-file');
+    const extractBtn = document.getElementById('extract-btn');
+    const loadingSpinner = document.getElementById('loading-spinner');
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const resultsContainer = document.getElementById('results-container');
+    const copyJsonBtn = document.getElementById('copy-json-btn');
+    const schemaInput = document.getElementById('extraction-schema');
     
-    // Initialize tooltips
-    const tooltips = document.querySelectorAll('[data-bs-toggle="tooltip"]');
-    tooltips.forEach(tooltip => {
-        new bootstrap.Tooltip(tooltip);
-    });
+    // Store the extracted data for copy functionality
+    let extractedData = null;
     
     // Handle form submission
-    uploadForm.addEventListener('submit', function(e) {
-        e.preventDefault();
+    uploadForm.addEventListener('submit', function(event) {
+        event.preventDefault();
         
         // Validate file selection
-        if (!pdfFileInput.files[0]) {
-            showAlert('warning', 'Please select a PDF file to upload.');
+        if (!fileInput.files || fileInput.files.length === 0) {
+            showAlert('danger', 'Please select a document file to upload');
             return;
         }
         
-        // Create FormData object
-        const formData = new FormData();
-        formData.append('file', pdfFileInput.files[0]);
-        
-        // Add extraction schema if provided
-        if (extractionSchemaInput.value) {
-            formData.append('extraction_schema', extractionSchemaInput.value);
+        // Validate schema format if provided
+        if (schemaInput.value.trim()) {
+            try {
+                JSON.parse(schemaInput.value);
+            } catch (e) {
+                showAlert('danger', 'Invalid JSON schema format: ' + e.message);
+                return;
+            }
         }
         
         // Start loading state
         startLoading();
         
-        // Send request to API
+        // Prepare form data for upload
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        
+        if (schemaInput.value.trim()) {
+            formData.append('extraction_schema', schemaInput.value);
+        }
+        
+        // Make the API request
         fetch('/api/extract', {
             method: 'POST',
             body: formData
         })
         .then(response => response.json())
         .then(data => {
-            // Stop loading state
-            stopLoading();
+            // Store the data for copy functionality
+            extractedData = data;
             
-            // Display the results
+            // Display results
+            displayResults(data);
+            
+            // Enable copy button
+            copyJsonBtn.disabled = false;
+            
+            // Show success message
             if (data.success) {
-                displayResults(data.data);
-                showAlert('success', 'Data extracted successfully!');
+                showAlert('success', 'Document data extracted successfully');
             } else {
-                displayResults({ error: data.error });
-                showAlert('danger', 'Error: ' + data.error);
+                showAlert('warning', 'Extraction completed with errors: ' + data.error);
             }
-            
-            // Enable reset button
-            resetButton.disabled = false;
         })
         .catch(error => {
-            // Stop loading state
-            stopLoading();
-            
-            // Display error
-            displayResults({ error: 'Failed to connect to the server. Please try again.' });
-            showAlert('danger', 'Error: Failed to connect to the server.');
             console.error('Error:', error);
+            showAlert('danger', 'Failed to process document: ' + error.message);
             
-            // Enable reset button
-            resetButton.disabled = false;
+            // Reset results area
+            resultsContainer.innerHTML = `
+                <div class="alert alert-danger">
+                    <h4 class="alert-heading">Extraction Failed</h4>
+                    <p>${error.message || 'Unknown error occurred during processing'}</p>
+                </div>
+            `;
+        })
+        .finally(() => {
+            stopLoading();
         });
     });
     
-    // Handle reset button click
-    resetButton.addEventListener('click', function() {
-        resetResults();
-        uploadForm.reset();
-        resetButton.disabled = true;
+    // Copy JSON button
+    copyJsonBtn.addEventListener('click', function() {
+        if (!extractedData) return;
+        
+        const jsonStr = JSON.stringify(extractedData, null, 2);
+        navigator.clipboard.writeText(jsonStr).then(
+            function() {
+                showAlert('info', 'JSON copied to clipboard');
+                // Visual feedback
+                copyJsonBtn.innerText = 'Copied!';
+                setTimeout(() => {
+                    copyJsonBtn.innerText = 'Copy JSON';
+                }, 2000);
+            },
+            function() {
+                showAlert('danger', 'Failed to copy to clipboard');
+            }
+        );
     });
     
     /**
@@ -84,25 +115,23 @@ document.addEventListener('DOMContentLoaded', function() {
         // Clear previous results
         resultsContainer.innerHTML = '';
         
-        if (data.error) {
-            // Display error message
-            resultsContainer.innerHTML = `
-                <div class="alert alert-danger mb-0">
-                    <h5 class="alert-heading">Extraction Failed</h5>
-                    <p class="mb-0">${data.error}</p>
+        if (data.success && data.data) {
+            // Create results display
+            const resultHtml = `
+                <div class="results-content">
+                    <pre class="json-display">${syntaxHighlight(JSON.stringify(data.data, null, 2))}</pre>
                 </div>
             `;
-            return;
+            resultsContainer.innerHTML = resultHtml;
+        } else {
+            // Show error
+            resultsContainer.innerHTML = `
+                <div class="alert alert-warning">
+                    <h4 class="alert-heading">Extraction Problem</h4>
+                    <p>${data.error || 'No data could be extracted from the document'}</p>
+                </div>
+            `;
         }
-        
-        // Create results display
-        const resultHtml = `
-            <div class="json-result">
-                <pre><code>${syntaxHighlight(JSON.stringify(data, null, 2))}</code></pre>
-            </div>
-        `;
-        
-        resultsContainer.innerHTML = resultHtml;
     }
     
     /**
@@ -110,58 +139,54 @@ document.addEventListener('DOMContentLoaded', function() {
      */
     function resetResults() {
         resultsContainer.innerHTML = `
-            <div class="text-center text-secondary p-5">
-                <div class="mb-3">
-                    <i class="bi bi-file-earmark-text" style="font-size: 3rem;"></i>
-                </div>
-                <p>Upload a PDF file to see the extracted data here.</p>
+            <div class="text-center py-5 text-secondary">
+                <i class="fas fa-file-alt fa-3x mb-3"></i>
+                <p>Upload a document to see extraction results</p>
             </div>
         `;
+        copyJsonBtn.disabled = true;
+        extractedData = null;
     }
     
     /**
      * Set UI to loading state
      */
     function startLoading() {
+        extractBtn.disabled = true;
         loadingSpinner.classList.remove('d-none');
-        uploadForm.querySelectorAll('button, input, textarea').forEach(el => {
-            el.disabled = true;
-        });
+        loadingOverlay.classList.remove('d-none');
     }
     
     /**
      * Reset UI from loading state
      */
     function stopLoading() {
+        extractBtn.disabled = false;
         loadingSpinner.classList.add('d-none');
-        uploadForm.querySelectorAll('button, input, textarea').forEach(el => {
-            el.disabled = false;
-        });
+        loadingOverlay.classList.add('d-none');
     }
     
     /**
      * Show an alert message that fades after a few seconds
      */
     function showAlert(type, message) {
-        const alertContainer = document.querySelector('.alert-container');
-        const alertId = 'alert-' + Date.now();
-        
-        const alertHtml = `
-            <div id="${alertId}" class="alert alert-${type} alert-dismissible fade show" role="alert">
-                ${message}
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            </div>
+        // Create alert element
+        const alertEl = document.createElement('div');
+        alertEl.className = `alert alert-${type} alert-dismissible fade show`;
+        alertEl.setAttribute('role', 'alert');
+        alertEl.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         `;
         
-        alertContainer.insertAdjacentHTML('beforeend', alertHtml);
+        // Add to the container after the header
+        const header = document.querySelector('header');
+        header.insertAdjacentElement('afterend', alertEl);
         
         // Auto-dismiss after 5 seconds
         setTimeout(() => {
-            const alert = document.getElementById(alertId);
-            if (alert) {
-                const bsAlert = new bootstrap.Alert(alert);
-                bsAlert.close();
-            }
+            const bsAlert = new bootstrap.Alert(alertEl);
+            bsAlert.close();
         }, 5000);
     }
     
@@ -170,20 +195,50 @@ document.addEventListener('DOMContentLoaded', function() {
      */
     function syntaxHighlight(json) {
         json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function(match) {
-            let cls = 'text-info'; // number
+        return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+            let cls = 'json-number';
             if (/^"/.test(match)) {
                 if (/:$/.test(match)) {
-                    cls = 'text-warning'; // key
+                    cls = 'json-key';
                 } else {
-                    cls = 'text-success'; // string
+                    cls = 'json-string';
                 }
             } else if (/true|false/.test(match)) {
-                cls = 'text-primary'; // boolean
+                cls = 'json-boolean';
             } else if (/null/.test(match)) {
-                cls = 'text-danger'; // null
+                cls = 'json-null';
             }
             return '<span class="' + cls + '">' + match + '</span>';
         });
     }
+    
+    // Reset file input when modal is closed
+    fileInput.addEventListener('change', function() {
+        if (this.files.length > 0) {
+            // Show file name
+            const fileName = this.files[0].name;
+            this.nextElementSibling = fileName;
+        }
+    });
+    
+    // Add example schema button
+    const exampleBtn = document.createElement('button');
+    exampleBtn.type = 'button';
+    exampleBtn.className = 'btn btn-sm btn-link mt-1';
+    exampleBtn.textContent = 'Load Example Schema';
+    exampleBtn.addEventListener('click', function() {
+        const exampleSchema = {
+            "fields": [
+                {"name": "invoice_number", "description": "The invoice identification number"},
+                {"name": "date", "description": "The invoice date"},
+                {"name": "total_amount", "description": "The total amount due"},
+                {"name": "customer", "description": "Customer name and details"},
+                {"name": "items", "description": "List of items, quantities and prices"}
+            ]
+        };
+        schemaInput.value = JSON.stringify(exampleSchema, null, 2);
+    });
+    
+    // Insert the button after the schema input
+    schemaInput.parentElement.appendChild(exampleBtn);
 });
