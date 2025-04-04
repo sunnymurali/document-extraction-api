@@ -108,8 +108,29 @@ Return the data as a clean JSON object.
         # Extract the response content
         response_content = response.content
         
-        # Parse and return the JSON response
-        return json.loads(response_content)
+        # Try to parse the JSON response
+        try:
+            # Remove any potential markdown code block syntax
+            cleaned_content = response_content
+            if "```json" in cleaned_content:
+                # Extract only the part between ```json and ```
+                parts = cleaned_content.split("```json")
+                if len(parts) > 1:
+                    json_parts = parts[1].split("```")
+                    if json_parts:
+                        cleaned_content = json_parts[0].strip()
+            elif "```" in cleaned_content:
+                # Extract only the part between ``` and ```
+                parts = cleaned_content.split("```")
+                if len(parts) > 1:
+                    cleaned_content = parts[1].strip()
+                    
+            # Parse and return the JSON response
+            return json.loads(cleaned_content)
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing JSON from response: {e}")
+            logger.debug(f"Raw response content: {response_content}")
+            raise Exception(f"Failed to parse JSON response from Azure OpenAI: {e}")
     
     except Exception as azure_error:
         # Log the Azure error and raise it without falling back to standard OpenAI
