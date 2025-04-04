@@ -13,6 +13,7 @@ import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
 import pypdf
+from openai import OpenAI
 
 from langchain_core.messages import SystemMessage, HumanMessage
 from utils.azure_openai_config import get_azure_chat_openai
@@ -20,6 +21,9 @@ from utils.azure_openai_config import get_azure_chat_openai
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Set up OpenAI client (for table extraction which uses multimodal capabilities)
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 
 def extract_text_from_pdf(file_path: str) -> str:
@@ -50,7 +54,8 @@ def extract_text_from_pdf(file_path: str) -> str:
 
 def extract_structured_data(text: str, schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
-    Extract structured data from text using OpenAI
+    Extract structured data from text using Azure OpenAI via LangChain
+    with fallback to standard OpenAI API if Azure fails
     
     Args:
         text: The text to extract data from
@@ -59,26 +64,25 @@ def extract_structured_data(text: str, schema: Optional[Dict[str, Any]] = None) 
     Returns:
         Extracted structured data as a dictionary
     """
-    try:
-        # If text is too long, truncate it to avoid exceeding token limits
-        if len(text) > 15000:
-            text = text[:15000] + "...(truncated)"
-        
-        # Prepare system message for the extraction
-        system_prompt = (
-            "You are a document data extraction assistant that extracts structured information from text. "
-            "Extract the information as a valid JSON object based on the provided schema or general document data. "
-            "If a field cannot be found in the text, use null as the value. Do not make up information."
-        )
-        
-        # Add schema information to the prompt if provided
-        if schema and "fields" in schema:
-            field_info = "\n".join([f"- {field['name']}: {field.get('description', '')}" 
-                                   for field in schema["fields"]])
-            system_prompt += f"\n\nExtract the following fields:\n{field_info}"
-        else:
-            # Default extraction without specific schema
-            system_prompt += """
+    # If text is too long, truncate it to avoid exceeding token limits
+    if len(text) > 15000:
+        text = text[:15000] + "...(truncated)"
+    
+    # Prepare system message for the extraction
+    system_prompt = (
+        "You are a document data extraction assistant that extracts structured information from text. "
+        "Extract the information as a valid JSON object based on the provided schema or general document data. "
+        "If a field cannot be found in the text, use null as the value. Do not make up information."
+    )
+    
+    # Add schema information to the prompt if provided
+    if schema and "fields" in schema:
+        field_info = "\n".join([f"- {field['name']}: {field.get('description', '')}" 
+                               for field in schema["fields"]])
+        system_prompt += f"\n\nExtract the following fields:\n{field_info}"
+    else:
+        # Default extraction without specific schema
+        system_prompt += """
 Extract the following common fields (if present):
 - name: The full name of a person or entity
 - date: Any relevant dates (e.g., invoice date, birth date)
@@ -91,30 +95,64 @@ Extract the following common fields (if present):
 
 Return the data as a clean JSON object.
 """
+    
+    # Try Azure OpenAI first
+    try:
+        logger.info("Attempting to extract data using Azure OpenAI...")
         
-        # Make the API call to OpenAI
-        # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
-        # do not change this unless explicitly requested by the user
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Extract structured data from this document text:\n\n{text}"}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.1,  # Lower temperature for more deterministic outputs
-            max_tokens=1000
-        )
+        # Create LangChain message objects
+        system_message = SystemMessage(content=system_prompt)
+        human_message = HumanMessage(content=f"Extract structured data from this document text:\n\n{text}")
+        
+        # Get Azure OpenAI client with appropriate settings
+        azure_client = get_azure_chat_openai(temperature=0.1, max_tokens=1000)
+        
+        # Make the API call to Azure OpenAI via LangChain
+        response = azure_client.invoke([system_message, human_message])
         
         # Extract the response content
-        response_content = response.choices[0].message.content
+        response_content = response.content
         
         # Parse and return the JSON response
         return json.loads(response_content)
     
-    except Exception as e:
-        logger.error(f"Error in OpenAI extraction: {str(e)}")
-        raise Exception(f"Failed to extract data: {str(e)}")
+    except Exception as azure_error:
+        # Log the Azure error but don't raise immediately, try standard OpenAI as fallback
+        logger.warning(f"Azure OpenAI extraction failed, falling back to standard OpenAI: {azure_error}")
+        
+        # Fallback to standard OpenAI if Azure API fails
+        try:
+            logger.info("Falling back to standard OpenAI for data extraction...")
+            
+            # Check if OpenAI API key is available
+            if not os.environ.get("OPENAI_API_KEY"):
+                raise Exception("No OpenAI API key available for fallback")
+            
+            # Make the API call to OpenAI
+            # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
+            # do not change this unless explicitly requested by the user
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Extract structured data from this document text:\n\n{text}"}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+                max_tokens=1000
+            )
+            
+            # Extract the response content
+            response_content = response.choices[0].message.content
+            
+            # Parse and return the JSON response
+            return json.loads(response_content)
+            
+        except Exception as openai_error:
+            # Both Azure and standard OpenAI failed
+            error_msg = f"Azure OpenAI failed: {azure_error}. Standard OpenAI fallback also failed: {openai_error}"
+            logger.error(error_msg)
+            raise Exception(f"Failed to extract data: {error_msg}")
 
 
 def extract_document_data(file_path: str, schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -263,28 +301,42 @@ def extract_tables_from_pdf(file_path: str, max_pages: int = 5) -> Dict[str, Any
                     "Only extract actual tables with proper headers and rows. Do not extract lists, paragraphs of text, or other non-tabular content."
                 )
                 
-                # Make the API call to OpenAI
-                # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
-                # do not change this unless explicitly requested by the user
-                response = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": f"Extract all tables from this PDF page (page {page_num + 1} of {total_pages})."},
-                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
-                            ]
-                        }
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0.1,
-                    max_tokens=2000
-                )
+                # For table extraction with images, we'll use the standard OpenAI API
+                # since the Azure OpenAI implementation through LangChain might not fully support multimodal content yet
+                
+                # Check if OpenAI API key is available for table extraction
+                if not os.environ.get("OPENAI_API_KEY"):
+                    logger.warning("No OpenAI API key available for table extraction. Returning empty tables.")
+                    response_content = json.dumps([])
+                else:
+                    try:
+                        # Make the API call to OpenAI for table extraction
+                        # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
+                        # do not change this unless explicitly requested by the user
+                        response = client.chat.completions.create(
+                            model="gpt-4o",
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "text", "text": f"Extract all tables from this PDF page (page {page_num + 1} of {total_pages})."},
+                                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
+                                    ]
+                                }
+                            ],
+                            response_format={"type": "json_object"},
+                            temperature=0.1,
+                            max_tokens=2000
+                        )
+                        
+                        # Extract the response content
+                        response_content = response.choices[0].message.content
+                    except Exception as e:
+                        logger.warning(f"Error in OpenAI table extraction: {str(e)}. Returning empty tables.")
+                        response_content = json.dumps([])
                 
                 # Parse the response
-                response_content = response.choices[0].message.content
                 response_data = json.loads(response_content)
                 
                 # Add page number info to the tables

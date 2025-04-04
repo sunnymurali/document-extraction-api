@@ -193,8 +193,18 @@ def serve_static(path):
 def check_api_key():
     # Use a flag to only log once
     if not getattr(app, '_api_key_checked', False):
-        if not os.environ.get("OPENAI_API_KEY"):
-            logger.warning("OPENAI_API_KEY environment variable not set. Extraction functionality will not work correctly.")
+        # Check for either OpenAI API key or Azure OpenAI configuration
+        if not os.environ.get("OPENAI_API_KEY") and not os.environ.get("AZURE_OPENAI_API_KEY"):
+            logger.warning("Neither OPENAI_API_KEY nor AZURE_OPENAI_API_KEY environment variable is set. Extraction functionality will not work correctly.")
+        
+        # Check Azure OpenAI required variables
+        if os.environ.get("AZURE_OPENAI_API_KEY"):
+            if not os.environ.get("AZURE_OPENAI_ENDPOINT"):
+                logger.warning("AZURE_OPENAI_ENDPOINT environment variable not set. Azure OpenAI functionality will not work correctly.")
+            
+            if not os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"):
+                logger.warning("AZURE_OPENAI_DEPLOYMENT_NAME environment variable not set. Azure OpenAI functionality will not work correctly.")
+        
         app._api_key_checked = True
 
 
