@@ -1,6 +1,6 @@
 """
 OpenAI Service for Data Extraction
-This module provides functions to extract structured data from text using OpenAI.
+This module provides functions to extract structured data from text using LangChain with Azure OpenAI.
 """
 
 import os
@@ -8,15 +8,20 @@ import json
 import logging
 from typing import Dict, Any, Optional, List
 
-import openai
-from openai import OpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.output_parsers.json import parse_json
 
-# Initialize OpenAI client with API key
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+# Import Azure OpenAI configuration
+from utils.azure_openai_config import get_azure_chat_openai
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def extract_structured_data(text: str, schema: Optional[str] = None) -> Dict[str, Any]:
     """
-    Extract structured data from text using OpenAI.
+    Extract structured data from text using Azure OpenAI via LangChain.
     
     Args:
         text: The text to extract data from
@@ -34,7 +39,7 @@ def extract_structured_data(text: str, schema: Optional[str] = None) -> Dict[str
             text = text[:15000] + "...(truncated)"
         
         # Prepare system message with extraction instructions
-        system_message = """You are a data extraction assistant that extracts structured information from text.
+        system_message_content = """You are a data extraction assistant that extracts structured information from text.
 Extract the information as a valid JSON object according to the schema provided.
 If a field cannot be found in the text, use null as the value. Do not make up information."""
         
@@ -48,13 +53,13 @@ If a field cannot be found in the text, use null as the value. Do not make up in
                     field_name = field.get("name", "")
                     field_desc = field.get("description", "")
                     schema_desc += f"- {field_name}: {field_desc}\n"
-                system_message += f"\n\n{schema_desc}"
+                system_message_content += f"\n\n{schema_desc}"
             except:
                 # If schema parsing fails, just use a generic extraction instruction
-                system_message += "\n\nExtract all relevant information from the document."
+                system_message_content += "\n\nExtract all relevant information from the document."
         else:
             # Default extraction without schema
-            system_message += """
+            system_message_content += """
 Extract the following common fields (if present):
 - name: The full name of a person or entity
 - date: Any relevant dates (e.g., invoice date, birth date)
@@ -65,26 +70,22 @@ Extract the following common fields (if present):
 - items: List of items with descriptions and prices
 - any other key information present in the document"""
         
-        # Make the API call to OpenAI
-        # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
-        # do not change this unless explicitly requested by the user
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": text}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.1,  # Lower temperature for more deterministic outputs
-            max_tokens=1000
-        )
+        # Create LangChain message objects
+        system_message = SystemMessage(content=system_message_content)
+        human_message = HumanMessage(content=text)
+        
+        # Get Azure OpenAI client with appropriate settings
+        client = get_azure_chat_openai(temperature=0.1, max_tokens=1000)
+        
+        # Make the API call to Azure OpenAI via LangChain
+        response = client.invoke([system_message, human_message])
         
         # Extract the response content
-        response_content = response.choices[0].message.content
+        response_content = response.content
         
         # Parse and return the JSON response
         return json.loads(response_content)
     
     except Exception as e:
-        logging.error(f"Error in OpenAI extraction: {str(e)}")
+        logger.error(f"Error in Azure OpenAI extraction: {str(e)}")
         raise Exception(f"Failed to extract data: {str(e)}")

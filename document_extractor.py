@@ -1,7 +1,7 @@
 """
 Document Data Extractor
 
-A utility that extracts structured data from PDF documents using PyPDF and OpenAI models.
+A utility that extracts structured data from PDF documents using PyPDF and Azure OpenAI models via LangChain.
 Returns extracted information as structured JSON data.
 """
 
@@ -13,14 +13,13 @@ import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
 import pypdf
-from openai import OpenAI
+
+from langchain_core.messages import SystemMessage, HumanMessage
+from utils.azure_openai_config import get_azure_chat_openai
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# Initialize OpenAI client
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 
 def extract_text_from_pdf(file_path: str) -> str:
