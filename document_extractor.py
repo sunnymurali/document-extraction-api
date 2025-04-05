@@ -24,8 +24,8 @@ from utils.document_chunking import (
     MAX_CHUNKS_TO_PROCESS
 )
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Configure logging - use WARNING level to reduce CPU usage from excessive logging
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -58,7 +58,7 @@ def extract_text_from_pdf(file_path: str) -> str:
 def extract_structured_data(text: str, schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Extract structured data from text using OpenAI services via LangChain.
-    First attempts to use Azure OpenAI, then falls back to standard OpenAI if necessary.
+    Optimized for performance with reduced token count.
     
     Args:
         text: The text to extract data from
@@ -67,15 +67,16 @@ def extract_structured_data(text: str, schema: Optional[Dict[str, Any]] = None) 
     Returns:
         Extracted structured data as a dictionary
     """
-    # If text is too long, truncate it to avoid exceeding token limits
-    if len(text) > 15000:
-        text = text[:15000] + "...(truncated)"
+    # If text is too long, truncate it more aggressively to reduce token usage
+    if len(text) > 12000:
+        text = text[:12000] + "...(text truncated for processing)"
     
     # Prepare system message for the extraction
     system_prompt = (
         "You are a document data extraction assistant that extracts structured information from text. "
         "Extract the information as a valid JSON object based on the provided schema or general document data. "
-        "If a field cannot be found in the text, use null as the value. Do not make up information."
+        "If a field cannot be found in the text, use null as the value. Do not make up information. "
+        "Be concise and direct in your extraction."
     )
     
     # Add schema information to the prompt if provided
@@ -84,19 +85,18 @@ def extract_structured_data(text: str, schema: Optional[Dict[str, Any]] = None) 
                                for field in schema["fields"]])
         system_prompt += f"\n\nExtract the following fields:\n{field_info}"
     else:
-        # Default extraction without specific schema
+        # Default extraction with fewer fields to reduce complexity
         system_prompt += """
 Extract the following common fields (if present):
 - name: The full name of a person or entity
-- date: Any relevant dates (e.g., invoice date, birth date)
+- date: Any relevant dates (e.g., invoice date)
 - address: Complete address information
 - phone: Phone number
 - email: Email address
 - total_amount: Any monetary total
-- items: List of items with descriptions and prices
-- any other key information present in the document
+- other_key_info: Any other important information
 
-Return the data as a clean JSON object.
+Return the data as a clean JSON object with no explanations.
 """
     
     # Create LangChain message objects
@@ -104,10 +104,8 @@ Return the data as a clean JSON object.
     human_message = HumanMessage(content=f"Extract structured data from this document text:\n\n{text}")
     
     try:
-        logger.info("Attempting to extract data using OpenAI services...")
-        
-        # Get OpenAI client with appropriate settings (will try Azure first, then fallback to standard OpenAI)
-        client = get_chat_openai(temperature=0.1, max_tokens=1000)
+        # Get OpenAI client with reduced token settings
+        client = get_chat_openai(temperature=0.1, max_tokens=500)
         
         # Make the API call to OpenAI via LangChain
         response = client.invoke([system_message, human_message])
@@ -116,42 +114,46 @@ Return the data as a clean JSON object.
         response_content = response.content
         
         # Check if response looks like HTML (it might be an error page)
-        if response_content.strip().startswith('<'):
+        if response_content and response_content.strip().startswith('<'):
             logger.error(f"Received HTML response instead of JSON: {response_content[:100]}...")
             raise Exception("Received HTML error page instead of JSON response. This usually indicates an authentication or API configuration issue.")
         
-        # Try to parse the JSON response
-        # Remove any potential markdown code block syntax
+        # Clean the content for JSON parsing (simplified version)
         cleaned_content = response_content
-        if "```json" in cleaned_content:
-            # Extract only the part between ```json and ```
-            parts = cleaned_content.split("```json")
-            if len(parts) > 1:
-                json_parts = parts[1].split("```")
-                if json_parts:
-                    cleaned_content = json_parts[0].strip()
-        elif "```" in cleaned_content:
-            # Extract only the part between ``` and ```
+        if cleaned_content and "```" in cleaned_content:
+            # Extract content between code blocks in one step
             parts = cleaned_content.split("```")
-            if len(parts) > 1:
-                cleaned_content = parts[1].strip()
-        
-        logger.debug(f"Cleaned response content for JSON parsing: {cleaned_content[:100]}...")
-        
+            if len(parts) >= 3:  # At least one full code block
+                # Get the content of the first code block
+                cleaned_content = parts[1]
+                # Remove json language identifier if present
+                if cleaned_content.startswith("json"):
+                    cleaned_content = cleaned_content[4:].strip()
+                    
         # Try to parse the JSON
         parsed_data = json.loads(cleaned_content)
-        logger.info("Successfully parsed JSON response")
         return parsed_data
         
     except json.JSONDecodeError as e:
-        logger.error(f"Error parsing JSON from response: {e}")
-        logger.debug(f"Raw response content: {response_content if 'response_content' in locals() else 'No response'}")
-        error_preview = response_content[:50] + "..." if len(response_content) > 50 else response_content
-        raise Exception(f"Failed to parse JSON response: {e}. Response begins with: {error_preview}")
+        # Provide error with truncated details to save memory
+        error_msg = f"Failed to parse JSON response: {str(e)[:100]}"
+        # More robust error handling to prevent unbound variable errors
+        response_preview = ""
+        try:
+            if 'response_content' in locals() and response_content:
+                response_preview = response_content[:50] if len(response_content) > 0 else ""
+        except:
+            pass
+        
+        if response_preview:
+            error_msg += f". Response preview: {response_preview}..."
+        
+        logger.error(error_msg)
+        raise Exception(error_msg)
     
     except Exception as e:
-        # Any other error in the process
-        error_msg = f"OpenAI connection failed (tried both Azure and standard OpenAI if configured): {e}"
+        # Simplified error handling
+        error_msg = f"OpenAI API error: {str(e)[:150]}"
         logger.error(error_msg)
         raise Exception(error_msg)
 
@@ -359,7 +361,7 @@ def extract_tables_from_pdf(file_path: str, max_pages: int = 5) -> Dict[str, Any
                 # Currently using a temporary implementation until Azure OpenAI fully supports multimodal content
                 try:
                     # Get OpenAI client for table extraction with fallback
-                    client = get_chat_openai(temperature=0.1, max_tokens=2000)
+                    client = get_chat_openai(temperature=0.1, max_tokens=500)
                     
                     # Placeholder for OpenAI vision implementation
                     # This is intentionally designed to raise an exception for now

@@ -16,8 +16,8 @@ from langchain_core.output_parsers.json import parse_json
 # Import OpenAI configuration (supports both Azure and standard OpenAI)
 from utils.azure_openai_config import get_chat_openai
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Configure logging - use WARNING level to reduce CPU usage from excessive logging
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def extract_structured_data(text: str, schema: Optional[str] = None) -> Dict[str, Any]:
@@ -76,16 +76,28 @@ Extract the following common fields (if present):
     
     try:
         # Get OpenAI client with appropriate settings (will use standard OpenAI with fallback to Azure)
-        # Reduced max_tokens to help with memory issues
-        client = get_chat_openai(temperature=0.1, max_tokens=500)
+        # Aggressively reduce max_tokens to improve memory usage and response time
+        client = get_chat_openai(temperature=0.1, max_tokens=300)
         
         logger.info("Successfully created OpenAI client, attempting to invoke...")
         
-        # Make the API call to OpenAI via LangChain
+        # Make the API call to OpenAI via LangChain with timeout handling
         try:
-            response = client.invoke([system_message, human_message])
-            # Extract the response content
-            response_content = response.content
+            # Set a timeout of 25 seconds to prevent UI freezing
+            import threading
+            import concurrent.futures
+            
+            def call_openai():
+                return client.invoke([system_message, human_message])
+                
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(call_openai)
+                try:
+                    response = future.result(timeout=25)  # Timeout after 25 seconds
+                    # Extract the response content
+                    response_content = response.content
+                except concurrent.futures.TimeoutError:
+                    raise Exception("OpenAI API request timed out after 25 seconds. Try with a smaller document.")
         except Exception as invoke_error:
             logger.error(f"Error invoking OpenAI: {str(invoke_error)}")
             raise Exception(f"Failed to get response from OpenAI: {str(invoke_error)}")
@@ -117,8 +129,22 @@ Extract the following common fields (if present):
     
     except json.JSONDecodeError as json_err:
         logger.error(f"Failed to parse JSON from response: {json_err}")
-        logger.debug(f"Raw response content: {response_content if 'response_content' in locals() else 'No response'}")
-        raise Exception(f"Failed to parse JSON from response: {json_err}. Response begins with: {response_content[:50] if 'response_content' in locals() else 'No response'}...")
+        
+        # More robust error handling to prevent unbound variable errors
+        response_preview = ""
+        try:
+            if 'response_content' in locals() and response_content:
+                response_preview = response_content[:50] if len(response_content) > 0 else ""
+        except:
+            pass
+            
+        logger.debug(f"Raw response content: {response_preview if response_preview else 'No response'}")
+        
+        error_message = f"Failed to parse JSON from response: {json_err}"
+        if response_preview:
+            error_message += f". Response begins with: {response_preview}..."
+            
+        raise Exception(error_message)
     
     except Exception as e:
         error_msg = f"OpenAI connection failed (tried both Azure and standard OpenAI if configured): {str(e)}"

@@ -9,19 +9,19 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 import json
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Configure logging - use WARNING level to reduce overhead
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Constants for chunking - reduced for memory constraints
-DEFAULT_CHUNK_SIZE = 2000   # Reduced from 4000 to help with memory issues
-DEFAULT_CHUNK_OVERLAP = 200 # Reduced from 500
-MAX_CHUNKS_TO_PROCESS = 5   # Safety limit to prevent excessive API calls/memory issues
+# Constants for chunking - aggressive optimization for memory usage
+DEFAULT_CHUNK_SIZE = 1250   # Further reduced for better performance and memory usage
+DEFAULT_CHUNK_OVERLAP = 50  # Minimized overlap to reduce redundant processing
+MAX_CHUNKS_TO_PROCESS = 2   # Very strict limit to prevent excessive processing and memory usage
 
 def split_text_into_chunks(text: str, chunk_size: int = DEFAULT_CHUNK_SIZE, 
                           chunk_overlap: int = DEFAULT_CHUNK_OVERLAP) -> List[str]:
     """
-    Split a large text document into overlapping chunks of approximately equal size.
+    Split a large text document into chunks with minimal processing overhead.
     
     Args:
         text: The text to split
@@ -29,7 +29,7 @@ def split_text_into_chunks(text: str, chunk_size: int = DEFAULT_CHUNK_SIZE,
         chunk_overlap: Number of characters to overlap between chunks
         
     Returns:
-        List of text chunks
+        List of text chunks (limited to MAX_CHUNKS_TO_PROCESS)
     """
     if not text:
         return []
@@ -38,47 +38,53 @@ def split_text_into_chunks(text: str, chunk_size: int = DEFAULT_CHUNK_SIZE,
     if len(text) <= chunk_size:
         return [text]
     
+    # Quick estimate of total chunks needed
+    total_length = len(text)
+    estimated_chunks = (total_length / (chunk_size - chunk_overlap)) + 1
+    
+    # If estimated chunks exceed our limit, adjust chunk size to process only important parts
+    if estimated_chunks > MAX_CHUNKS_TO_PROCESS:
+        # Strategy: Focus on beginning of document (usually contains more important info)
+        # First half of max chunks from beginning, second half spread throughout the rest
+        first_part_size = MAX_CHUNKS_TO_PROCESS // 2 * (chunk_size - chunk_overlap)
+        if first_part_size >= total_length:
+            # Document is small enough to process in MAX_CHUNKS_TO_PROCESS chunks
+            pass
+        else:
+            # Process beginning and selected parts
+            text = text[:first_part_size] + "\n\n[Content truncated for processing]\n\n" + text[-first_part_size:]
+    
     chunks = []
     start = 0
     
-    while start < len(text):
+    # Simple and efficient chunking - don't spend too much time looking for ideal boundaries
+    while start < len(text) and len(chunks) < MAX_CHUNKS_TO_PROCESS:
         # Get a chunk of size chunk_size or the rest of the text
         end = min(start + chunk_size, len(text))
         
-        # If this isn't the last chunk, try to end at a paragraph or sentence boundary
+        # Only look for paragraph breaks, which is less CPU intensive
         if end < len(text):
-            # Look for paragraph breaks first
-            paragraph_end = text.rfind("\n\n", start, end)
-            if paragraph_end > start + chunk_size // 2:  # If a paragraph break is in the second half of the chunk
-                end = paragraph_end + 2  # Include the double newline
-            else:
-                # Otherwise look for sentence breaks (periods followed by space)
-                sentence_end = text.rfind(". ", start, end)
-                if sentence_end > start + chunk_size // 2:  # If a sentence break is in the second half of the chunk
-                    end = sentence_end + 2  # Include the period and space
+            # Simple paragraph break search with a limit
+            paragraph_end = text.rfind("\n\n", max(start, end - 200), end)
+            if paragraph_end > 0:
+                end = paragraph_end + 2
         
         # Add the chunk
         chunks.append(text[start:end])
         
         # Move to the next chunk, with overlap
-        start = max(start, end - chunk_overlap)
+        start = end - chunk_overlap
         
-        # Stop if we've reached the end of the text
-        if start >= len(text):
+        # Break early if we've reached our limit
+        if len(chunks) >= MAX_CHUNKS_TO_PROCESS:
             break
     
     logger.info(f"Split document into {len(chunks)} chunks")
-    
-    # Apply safety limit
-    if len(chunks) > MAX_CHUNKS_TO_PROCESS:
-        logger.warning(f"Document produced {len(chunks)} chunks, limiting to {MAX_CHUNKS_TO_PROCESS}")
-        chunks = chunks[:MAX_CHUNKS_TO_PROCESS]
-    
     return chunks
 
 def calculate_field_confidence(value: Any, chunk_index: int, total_chunks: int) -> float:
     """
-    Calculate a confidence score for an extracted field based on its value and position in the document.
+    Simple and fast confidence calculation based primarily on chunk position.
     
     Args:
         value: The extracted value
@@ -88,29 +94,19 @@ def calculate_field_confidence(value: Any, chunk_index: int, total_chunks: int) 
     Returns:
         Confidence score between 0 and 1
     """
-    # Base confidence is higher for early chunks (typically contain headers and important info)
-    position_factor = 1.0 - (chunk_index / (total_chunks * 2))  # Higher confidence for earlier chunks
-    
-    # Null values have minimum confidence
-    if value is None:
-        return 0.1
-    
-    # Empty strings or empty lists have low confidence
-    if (isinstance(value, str) and not value.strip()) or (isinstance(value, list) and not value):
-        return 0.2
-    
-    # Give higher confidence to non-empty values
-    base_confidence = 0.7
-    
-    # Adjust based on position
-    confidence = base_confidence + (position_factor * 0.3)
-    
-    # Ensure confidence is between 0 and 1
-    return max(0.1, min(0.99, confidence))
+    # Simplified confidence calculation
+    # First chunk has highest confidence, decreasing for later chunks
+    if chunk_index == 0:
+        return 0.9  # First chunk has highest confidence
+    elif value is None or (isinstance(value, str) and not value.strip()):
+        return 0.1  # Empty values have low confidence
+    else:
+        # Simple position-based confidence calculation
+        return max(0.1, min(0.8, 0.8 - (chunk_index / (total_chunks + 1)) * 0.5))
 
 def merge_extraction_results(results: List[Dict[str, Any]], schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
-    Merge extraction results from multiple chunks into a unified result.
+    Optimized merging algorithm with less CPU-intensive operations.
     
     Args:
         results: List of extraction results from individual chunks
@@ -122,55 +118,72 @@ def merge_extraction_results(results: List[Dict[str, Any]], schema: Optional[Dic
     if not results:
         return {}
     
+    # Fast path for single result
+    if len(results) == 1:
+        # Filter out success/error keys if they exist
+        result = {k: v for k, v in results[0].items() if k not in ["success", "error"]}
+        return result
+    
     merged_result = {}
     field_confidences = {}  # Track confidence for each field
     
-    # Extract field names from schema if available
-    schema_fields = []
-    if schema and "fields" in schema:
-        schema_fields = [field["name"] for field in schema["fields"]]
-    
-    # Process each result
+    # Process each result with minimized operations
     for i, result in enumerate(results):
         if not result or not isinstance(result, dict):
             continue
         
-        # Calculate position-based confidence
+        # Process only keys that might be valid fields (exclude metadata keys)
         for field, value in result.items():
-            # Skip the "success" and "error" fields which might be in the top-level result
             if field in ["success", "error"]:
                 continue
                 
-            # Calculate confidence for this field
+            # Quick confidence calculation
             confidence = calculate_field_confidence(value, i, len(results))
             
-            # If field is not in merged_result or has higher confidence than previous value
+            # Field doesn't exist or new value has higher confidence
             if field not in field_confidences or confidence > field_confidences[field]:
                 merged_result[field] = value
                 field_confidences[field] = confidence
+            
+            # Only merge arrays if really necessary
             elif isinstance(value, list) and isinstance(merged_result.get(field), list):
-                # Special handling for arrays - merge them
-                merged_result[field].extend(value)
-                # Remove duplicates if items are dictionaries
-                if merged_result[field] and isinstance(merged_result[field][0], dict):
-                    # Try to deduplicate based on a first field that might be an identifier
-                    if merged_result[field][0]:
-                        id_field = next(iter(merged_result[field][0].keys()))
+                # Just extend for primitive lists (fast operation)
+                if not value or not isinstance(value[0], dict):
+                    merged_result[field].extend(value)
+                else:
+                    # Simplified deduplication for dictionary-based lists
+                    # Only merge if confidence is close enough to be worth the effort
+                    if confidence > field_confidences[field] * 0.8:
+                        # Use a set for faster lookups
                         seen = set()
                         unique_items = []
-                        for item in merged_result[field]:
-                            item_id = item.get(id_field, "")
-                            if item_id and item_id not in seen:
-                                seen.add(item_id)
-                                unique_items.append(item)
-                        merged_result[field] = unique_items
+                        
+                        # Use the first key as identifier (faster than trying multiple keys)
+                        if value[0]:
+                            id_field = next(iter(value[0].keys()))
+                            
+                            # Process existing items
+                            for item in merged_result[field]:
+                                item_id = str(item.get(id_field, object()))  # Unique objects for missing ids
+                                if item_id not in seen:
+                                    seen.add(item_id)
+                                    unique_items.append(item)
+                            
+                            # Add new items
+                            for item in value:
+                                item_id = str(item.get(id_field, object()))  # Unique objects for missing ids
+                                if item_id not in seen:
+                                    seen.add(item_id)
+                                    unique_items.append(item)
+                                    
+                            merged_result[field] = unique_items
     
-    logger.info(f"Merged {len(results)} extraction results into a unified result")
+    logger.debug(f"Merged {len(results)} extraction results into a unified result")
     return merged_result
 
 def process_chunks_with_progress(chunks: List[str], extractor_func, schema: Optional[Dict[str, Any]] = None):
     """
-    Process text chunks with a progress callback.
+    Memory-optimized chunk processing with minimal logging.
     
     Args:
         chunks: List of text chunks to process
@@ -180,63 +193,91 @@ def process_chunks_with_progress(chunks: List[str], extractor_func, schema: Opti
     Returns:
         Tuple of (merged_result, progress_info)
     """
-    results = []
+    # Preallocate result arrays to avoid dynamic resizing
+    results = [{} for _ in range(len(chunks))]
     progress_info = []
     
+    # Fast path for single chunk
+    if len(chunks) == 1:
+        try:
+            logger.info("Processing single chunk document")
+            single_result = extractor_func(chunks[0], schema)
+            
+            # Create simplified progress info
+            progress_info = [{
+                "chunk": 1,
+                "total_chunks": 1,
+                "chunk_size": len(chunks[0]),
+                "percent_complete": 100.0,
+                "fields_extracted": len(single_result) if single_result else 0,
+                "status": "success"
+            }]
+            
+            return single_result, progress_info
+        except Exception as e:
+            logger.error(f"Error processing single chunk: {e}")
+            progress_info = [{
+                "chunk": 1,
+                "total_chunks": 1,
+                "percent_complete": 100.0,
+                "fields_extracted": 0,
+                "status": "error",
+                "error": str(e)
+            }]
+            return {}, progress_info
+    
+    # Process multiple chunks with minimal logging
     total_chunks = len(chunks)
     logger.info(f"Processing {total_chunks} chunks")
     
+    # Track only essential metrics
+    successful_chunks = 0
+    
     for i, chunk in enumerate(chunks):
-        logger.info(f"Processing chunk {i+1}/{total_chunks} ({len(chunk)} characters)")
-        logger.info(f"Chunk {i+1} preview: {chunk[:100]}...")
+        # Only log at start and end of each chunk
+        logger.info(f"Processing chunk {i+1}/{total_chunks}")
         
         # Extract data from this chunk
         try:
-            logger.info(f"Calling extraction function for chunk {i+1}")
             chunk_result = extractor_func(chunk, schema)
             
-            # Log fields extracted
+            # Calculate basic metrics
             field_count = len(chunk_result) if chunk_result else 0
-            field_names = list(chunk_result.keys()) if chunk_result else []
-            logger.info(f"Chunk {i+1} processed successfully with {field_count} fields: {field_names}")
+            field_names = list(chunk_result.keys())[:5] if chunk_result else []  # Only log first 5 fields
             
-            # Add to results
-            if chunk_result:
-                results.append(chunk_result)
+            # Only log success at warning level to reduce output
+            if field_count > 0:
+                logger.info(f"Chunk {i+1}: extracted {field_count} fields")
+                successful_chunks += 1
             else:
-                logger.warning(f"Chunk {i+1} returned empty result")
-                results.append({})  # Add empty dict to keep index alignment
+                logger.warning(f"Chunk {i+1}: no fields extracted")
             
-            # Update progress
+            # Store result directly in preallocated array
+            results[i] = chunk_result if chunk_result else {}
+            
+            # Build progress info (minimal set of fields)
             progress_info.append({
                 "chunk": i+1,
                 "total_chunks": total_chunks,
-                "chunk_size": len(chunk),
                 "percent_complete": (i+1) / total_chunks * 100,
                 "fields_extracted": field_count,
                 "status": "success"
             })
             
         except Exception as e:
-            logger.error(f"Error processing chunk {i+1}/{total_chunks}: {e}")
+            logger.error(f"Error processing chunk {i+1}: {str(e)[:100]}")
             
-            # Add empty result for this chunk to keep index alignment
-            results.append({})
-            
-            # Update progress with error
+            # Progress info with error (minimized)
             progress_info.append({
                 "chunk": i+1,
                 "total_chunks": total_chunks,
-                "chunk_size": len(chunk),
                 "percent_complete": (i+1) / total_chunks * 100,
-                "fields_extracted": 0,
                 "status": "error",
-                "error": str(e)
+                "error": str(e)[:100]  # Truncate long error messages
             })
     
-    # Merge results
-    logger.info(f"Merging results from {len(results)} chunks (successful: {sum(1 for p in progress_info if p.get('status') == 'success')})")
+    # Efficiently merge results
+    logger.info(f"Merging results from {successful_chunks} successful chunks")
     merged_result = merge_extraction_results(results, schema)
-    logger.info(f"Merge complete, final result has {len(merged_result)} fields: {list(merged_result.keys())}")
     
     return merged_result, progress_info

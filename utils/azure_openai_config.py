@@ -13,8 +13,8 @@ from langchain_openai import AzureChatOpenAI, ChatOpenAI
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import SystemMessage, HumanMessage
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Configure logging - use WARNING level to reduce CPU usage from excessive logging
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Azure OpenAI configuration
@@ -29,7 +29,7 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 # do not change this unless explicitly requested by the user
 OPENAI_MODEL = "gpt-4o"
 
-def get_chat_openai(temperature: float = 0.1, max_tokens: int = 1000) -> BaseChatModel:
+def get_chat_openai(temperature: float = 0.1, max_tokens: int = 300) -> BaseChatModel:
     """
     Creates an instance of a chat model client with the specified parameters.
     Now prioritizing standard OpenAI because our tests show Azure OpenAI has connection issues.
@@ -93,7 +93,7 @@ def get_chat_openai(temperature: float = 0.1, max_tokens: int = 1000) -> BaseCha
     raise Exception("Failed to configure either standard OpenAI or Azure OpenAI. Please check your API credentials.")
 
 # For backward compatibility
-def get_azure_chat_openai(temperature: float = 0.1, max_tokens: int = 1000) -> BaseChatModel:
+def get_azure_chat_openai(temperature: float = 0.1, max_tokens: int = 300) -> BaseChatModel:
     """
     Backward compatibility function that uses the new get_chat_openai function internally.
     This allows existing code to continue working without changes.
