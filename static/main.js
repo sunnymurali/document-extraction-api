@@ -33,6 +33,15 @@ document.addEventListener('DOMContentLoaded', function() {
     const tablesResultsContainer = document.getElementById('tables-results-container');
     const copyTablesJsonBtn = document.getElementById('copy-tables-json-btn');
     
+    // Log all DOM elements for debugging
+    console.log('DOM Elements:', {
+        uploadForm, fileInput, schemaInput, jsonSchemaContainer,
+        fieldsBuilder, fieldsContainer, noFieldsMessage, addFieldBtn,
+        toggleJsonViewBtn, useChunkingCheckbox, extractBtn, loadingSpinner,
+        loadingOverlay, progressContainer, progressBar, progressText,
+        resultsContainer, copyJsonBtn
+    });
+    
     // State variables
     let statusInterval = null;
     let activeDocumentId = null;
@@ -210,6 +219,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     // Proceed to fetch the results
                     fetchExtractionResults(documentId)
                         .then(result => {
+                            console.log("Got extraction results:", result);
+                            
                             if (!result.success) {
                                 showAlert('danger', 'Extraction failed: ' + (result.error || 'Unknown error'));
                                 stopLoading();
@@ -219,6 +230,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             
                             // Store the extracted data for later use
                             extractedData = result.data;
+                            console.log("Extracted data:", extractedData);
                             
                             // Display the results
                             displayResults(result.data);
@@ -261,7 +273,11 @@ document.addEventListener('DOMContentLoaded', function() {
     function fetchExtractionResults(documentId) {
         console.log("Fetching results for document:", documentId);
         return fetch(`/api/result/${documentId}`)
-            .then(handleResponse);
+            .then(handleResponse)
+            .then(result => {
+                console.log("Raw API response for results:", result);
+                return result;
+            });
     }
     
     // Standard response handler
@@ -375,29 +391,77 @@ document.addEventListener('DOMContentLoaded', function() {
      * Display extraction results in the results container
      */
     function displayResults(data) {
+        console.log("Displaying results:", data);
+        
+        // Check if results container exists
+        if (!resultsContainer) {
+            console.error("Results container is null");
+            return;
+        }
+        
         // Clear previous results
         resetResults();
         
         // Show the container
         resultsContainer.style.display = 'block';
         
+        // Debug the results container's children
+        console.log("Results container children:", resultsContainer.childNodes);
+        
         // Get pre element for results
         const preElement = document.getElementById('json-output');
+        console.log("Pre element for JSON output:", preElement);
         
         if (!preElement) {
             console.error("Error: Could not find element with ID 'json-output'");
             showAlert('danger', 'Error displaying results: UI element not found.');
+            
+            // Create the element if it doesn't exist
+            const newPreElement = document.createElement('pre');
+            newPreElement.id = 'json-output';
+            newPreElement.className = 'json-display';
+            resultsContainer.appendChild(newPreElement);
+            
+            console.log("Created new pre element:", newPreElement);
+            
+            // Try again with the new element
+            displayResults(data);
             return;
         }
         
         // Store the extracted data for the copy button
         extractedData = data;
         
-        // Format the data
-        const formattedJson = syntaxHighlight(JSON.stringify(data, null, 2));
+        // Add a friendly message if all fields are null
+        let allFieldsNull = true;
+        if (data && typeof data === 'object') {
+            allFieldsNull = Object.values(data).every(val => val === null);
+        }
         
-        // Add formatted JSON to the results
-        preElement.innerHTML = formattedJson;
+        if (allFieldsNull && Object.keys(data).length > 0) {
+            // Add a friendly message before the JSON
+            preElement.innerHTML = `<div class="alert alert-warning mb-3">
+                <p><strong>Note:</strong> No specific data could be extracted for the requested fields.</p>
+                <p>This may be because:</p>
+                <ul>
+                    <li>The document doesn't contain the requested information</li>
+                    <li>The information format wasn't recognized</li>
+                    <li>The extraction model needs more specific field descriptions</li>
+                </ul>
+                <p>Try again with more specific field descriptions or try different fields.</p>
+            </div>`;
+            
+            // Still show the structure with null values
+            const formattedJson = syntaxHighlight(JSON.stringify(data, null, 2));
+            preElement.innerHTML += formattedJson;
+        } else {
+            // Format the data normally
+            const formattedJson = syntaxHighlight(JSON.stringify(data, null, 2));
+            
+            // Add formatted JSON to the results
+            preElement.innerHTML = formattedJson;
+        }
+        console.log("Set inner HTML of pre element");
         
         // Enable the copy button
         copyJsonBtn.disabled = false;
@@ -407,16 +471,21 @@ document.addEventListener('DOMContentLoaded', function() {
      * Reset the results container to its initial state
      */
     function resetResults() {
+        console.log("Resetting results");
+        
         // Reset extracted data
         extractedData = null;
         
-        // Reset the results container
-        resultsContainer.style.display = 'none';
+        // Don't hide the container, just clear its contents
+        // resultsContainer.style.display = 'none';
         
         // Clear any previous results
         const preElement = document.getElementById('json-output');
         if (preElement) {
             preElement.innerHTML = '';
+            console.log("Cleared pre element content");
+        } else {
+            console.log("No pre element found during reset");
         }
     }
     
@@ -827,4 +896,21 @@ document.addEventListener('DOMContentLoaded', function() {
     // Add default empty field
     addField();
     updateFieldDisplay();
+    
+    // Log HTML structure of results container for debugging
+    console.log("Results container HTML:", resultsContainer ? resultsContainer.innerHTML : "null");
+    
+    // Check for json-output element
+    const jsonOutput = document.getElementById('json-output');
+    console.log("JSON output element:", jsonOutput);
+    
+    // If json-output doesn't exist, create it
+    if (!jsonOutput && resultsContainer) {
+        const preElement = document.createElement('pre');
+        preElement.id = 'json-output';
+        preElement.className = 'json-display';
+        // Append it to the results container
+        resultsContainer.appendChild(preElement);
+        console.log("Created json-output element:", preElement);
+    }
 });

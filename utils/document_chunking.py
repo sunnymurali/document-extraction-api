@@ -140,10 +140,19 @@ def merge_extraction_results(results: List[Dict[str, Any]], schema: Optional[Dic
             # Quick confidence calculation
             confidence = calculate_field_confidence(value, i, len(results))
             
+            # Debug data to identify empty result issue
+            logger.debug(f"Field: {field}, Value: {value}, Confidence: {confidence}")
+            
             # Field doesn't exist or new value has higher confidence
             if field not in field_confidences or confidence > field_confidences[field]:
-                merged_result[field] = value
-                field_confidences[field] = confidence
+                # Skip empty values
+                if value is not None and value != "":
+                    merged_result[field] = value
+                    field_confidences[field] = confidence
+                elif field not in merged_result:
+                    # Only add null if nothing exists for this field
+                    merged_result[field] = value
+                    field_confidences[field] = confidence
             
             # Only merge arrays if really necessary
             elif isinstance(value, list) and isinstance(merged_result.get(field), list):
