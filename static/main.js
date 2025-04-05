@@ -326,7 +326,7 @@ document.addEventListener('DOMContentLoaded', () => {
         clearTimeout(extractionTimer);
         
         try {
-            const response = await fetch(`/tasks/${taskId}/status`);
+            const response = await fetch(`/extraction/${taskId}/status`);
             const data = await response.json();
             
             if (!response.ok) {
@@ -408,7 +408,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             toggleLoading(true);
             
-            const response = await fetch(`/tasks/${taskId}/result`);
+            const response = await fetch(`/extraction/${taskId}/result`);
             const data = await response.json();
             
             if (!response.ok) {
