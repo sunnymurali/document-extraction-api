@@ -73,17 +73,36 @@ def extract_structured_data(text: str, schema: Optional[Dict[str, Any]] = None) 
     
     # Prepare system message for the extraction
     system_prompt = (
-        "You are a document data extraction assistant that extracts structured information from text. "
+        "You are a financial document data extraction assistant that extracts structured information from text. "
         "Extract the information as a valid JSON object based on the provided schema or general document data. "
-        "If a field cannot be found in the text, use null as the value. Do not make up information. "
-        "Be concise and direct in your extraction."
+        "Be thorough in your search for financial information in the document. "
+        "Financial information is often found in tables, statements, or sections dedicated to financial results. "
+        "Look for actual numeric values, paying special attention to dollar amounts. "
+        "If a field cannot be found after thorough search, use null as the value. Do not make up information. "
+        "Be concise and direct in your extraction. For fields like 'Business Segment Financial Performance', "
+        "extract a summary of performance across different business segments."
     )
     
     # Add schema information to the prompt if provided
     if schema and "fields" in schema:
-        field_info = "\n".join([f"- {field['name']}: {field.get('description', '')}" 
-                               for field in schema["fields"]])
-        system_prompt += f"\n\nExtract the following fields:\n{field_info}"
+        # Build more detailed prompting for each field with specific financial instructions
+        field_descriptions = []
+        for field in schema["fields"]:
+            field_name = field['name']
+            field_desc = field.get('description', '')
+            
+            # Add specific guidance for each field type
+            if field_name == "Net Interest Income":
+                field_desc = "This is a key financial metric found in the income statement or financial results section. Look for mentions of 'Net Interest Income' or 'NII', typically reported in millions or billions of dollars. Extract the most recent annual value."
+            elif field_name == "Total operating expense":
+                field_desc = "This is a financial metric found in the income statement, often listed as 'Operating Expenses', 'Total Operating Expenses', or 'Operating Costs'. Look for the sum of all expenses related to operations. Extract the most recent annual value."
+            elif field_name == "Business Segment Financial Performance":
+                field_desc = "Look for a section that breaks down the performance by different business segments or divisions. Extract a summary of each segment's performance with their names and key metrics (revenue, income, etc.). This is often found in a segment reporting section."
+            
+            field_descriptions.append(f"- {field_name}: {field_desc}")
+            
+        field_info = "\n".join(field_descriptions)
+        system_prompt += f"\n\nExtract the following fields:\n{field_info}\n\nThese fields are definitely present in the document. Search thoroughly through all sections and tables. Return the specific values (with proper formatting for currency) when available, and provide descriptive text for the Business Segment Financial Performance."
     else:
         # Default extraction with fewer fields to reduce complexity
         system_prompt += """
@@ -104,8 +123,8 @@ Return the data as a clean JSON object with no explanations.
     human_message = HumanMessage(content=f"Extract structured data from this document text:\n\n{text}")
     
     try:
-        # Get OpenAI client with reduced token settings
-        client = get_chat_openai(temperature=0.1, max_tokens=500)
+        # Get OpenAI client with higher token limit for financial data
+        client = get_chat_openai(temperature=0.1, max_tokens=1000)
         
         # Make the API call to OpenAI via LangChain
         response = client.invoke([system_message, human_message])
