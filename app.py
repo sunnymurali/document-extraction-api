@@ -154,15 +154,37 @@ def extract_data():
         # Check if chunking should be used
         use_chunking = data.get('use_chunking', True)
         
-        # Start async extraction
-        async_extract_document(document_id, schema, use_chunking)
+        # Log extraction details to help debug issues
+        with open("/tmp/extract_debug.log", "a") as f:
+            f.write(f"Starting extraction for document {document_id}\n")
+            f.write(f"Schema: {schema}\n")
+            f.write(f"Use chunking: {use_chunking}\n")
         
-        return jsonify({
-            'success': True,
-            'document_id': document_id,
-            'status': 'processing',
-            'message': 'Extraction started'
-        })
+        # Start async extraction
+        try:
+            async_extract_document(document_id, schema, use_chunking)
+            
+            # Log success
+            with open("/tmp/extract_debug.log", "a") as f:
+                f.write(f"Successfully started extraction for document {document_id}\n")
+            
+            return jsonify({
+                'success': True,
+                'document_id': document_id,
+                'status': 'processing',
+                'message': 'Extraction started'
+            })
+        except Exception as e:
+            # Log error for debugging
+            error_msg = f"Error starting extraction: {str(e)}"
+            logger.error(error_msg)
+            with open("/tmp/extract_debug.log", "a") as f:
+                f.write(f"ERROR: {error_msg}\n")
+                
+            return jsonify({
+                'success': False,
+                'error': error_msg
+            }), 500
     
     except Exception as e:
         logger.error(f"Error starting extraction: {e}")

@@ -41,36 +41,108 @@ def extract_text_from_pdf(file_path: str) -> str:
     """
     try:
         logger.info(f"Extracting text from PDF: {file_path}")
+        
+        # Use PyMuPDF for initial file analysis to detect document type
+        import fitz  # PyMuPDF
+        try:
+            doc = fitz.open(file_path)
+            first_page_text = doc[0].get_text()
+            doc.close()
+            
+            # Detect document type based on content
+            is_morgan_stanley = "Morgan Stanley" in first_page_text
+            is_capital_one = "Capital One" in first_page_text
+            
+            logger.info(f"Document detection: Morgan Stanley: {is_morgan_stanley}, Capital One: {is_capital_one}")
+        except Exception as mupdf_error:
+            logger.warning(f"PyMuPDF analysis failed, proceeding with standard extraction: {mupdf_error}")
+            is_morgan_stanley = False
+            is_capital_one = False
+            
         reader = pypdf.PdfReader(file_path)
         
         # Get total number of pages
         num_pages = len(reader.pages)
         logger.info(f"PDF document has {num_pages} pages")
         
-        # For financial documents, focus on the most important pages (limit to 100 pages)
-        # Many financial metrics are found in the first 30% of an annual report, then in tables mid-document
-        max_pages = min(num_pages, 100)
         text = ""
         
-        # First extract from early pages (likely to contain management discussion, financial highlights)
-        early_pages = min(int(max_pages * 0.3), 30)  # Up to 30% of document or 30 pages
-        logger.info(f"Extracting first {early_pages} pages for executive summary and key metrics")
-        
-        for i in range(early_pages):
-            if i < num_pages:
+        # Different extraction strategy based on document type
+        if is_morgan_stanley:
+            logger.info("Using Morgan Stanley specific extraction strategy")
+            
+            # Morgan Stanley reports often have financial data in specific sections
+            # Focus on management discussion (MD&A) and financial statements sections
+            
+            # Extract from early pages (table of contents, highlights, key metrics)
+            toc_range = min(15, num_pages)  # First few pages usually contain TOC
+            for i in range(toc_range):
                 page_text = reader.pages[i].extract_text() or ""
                 text += page_text + "\n\n"
-        
-        # Then extract from middle pages (likely to contain financial statements and tables)
-        if num_pages > early_pages:
-            middle_start = early_pages
-            middle_end = min(num_pages, 70)  # Financial statements usually before page 70
-            logger.info(f"Extracting middle pages {middle_start} to {middle_end} for financial statements")
+            
+            # For Morgan Stanley, financial data is often in pages 60-120
+            financial_start = min(60, num_pages)
+            financial_end = min(120, num_pages)
+            
+            for i in range(financial_start, financial_end):
+                if i < num_pages:
+                    page_text = reader.pages[i].extract_text() or ""
+                    text += page_text + "\n\n"
+                    
+            # Also extract management discussion section (usually pages 25-50)
+            mda_start = min(25, num_pages)
+            mda_end = min(50, num_pages)
+            
+            for i in range(mda_start, mda_end):
+                if i < num_pages and i not in range(financial_start, financial_end):
+                    page_text = reader.pages[i].extract_text() or ""
+                    text += page_text + "\n\n"
+                    
+        elif is_capital_one:
+            logger.info("Using Capital One specific extraction strategy")
+            
+            # Capital One specific extraction logic
+            # Similar to default but with focus on different page ranges
+            
+            # Extract early pages for executive summary
+            early_pages = min(int(num_pages * 0.25), 25)
+            for i in range(early_pages):
+                page_text = reader.pages[i].extract_text() or ""
+                text += page_text + "\n\n"
+            
+            # Capital One often has key financial tables from pages 40-80
+            middle_start = max(30, early_pages)
+            middle_end = min(num_pages, 80)
             
             for i in range(middle_start, middle_end):
                 if i < num_pages:
                     page_text = reader.pages[i].extract_text() or ""
                     text += page_text + "\n\n"
+                
+        else:
+            # Default extraction for general financial documents
+            # For financial documents, focus on the most important pages (limit to 100 pages)
+            max_pages = min(num_pages, 100)
+            
+            # First extract from early pages (likely to contain management discussion, financial highlights)
+            early_pages = min(int(max_pages * 0.3), 30)  # Up to 30% of document or 30 pages
+            logger.info(f"Extracting first {early_pages} pages for executive summary and key metrics")
+            
+            for i in range(early_pages):
+                if i < num_pages:
+                    page_text = reader.pages[i].extract_text() or ""
+                    text += page_text + "\n\n"
+            
+            # Then extract from middle pages (likely to contain financial statements and tables)
+            if num_pages > early_pages:
+                middle_start = early_pages
+                middle_end = min(num_pages, 70)  # Financial statements usually before page 70
+                logger.info(f"Extracting middle pages {middle_start} to {middle_end} for financial statements")
+                
+                for i in range(middle_start, middle_end):
+                    if i < num_pages:
+                        page_text = reader.pages[i].extract_text() or ""
+                        text += page_text + "\n\n"
         
         # If text extraction failed or text is too short, try fallback method
         if len(text.strip()) < 1000 and num_pages > 5:
@@ -78,13 +150,32 @@ def extract_text_from_pdf(file_path: str) -> str:
             
             # Fallback to sequential extraction of all pages
             text = ""
-            for i in range(min(num_pages, 100)):  # Limit to 100 pages
-                page_text = reader.pages[i].extract_text() or ""
-                text += page_text + "\n\n"
+            
+            # Try PyMuPDF as the fallback extraction method
+            try:
+                logger.info("Attempting PyMuPDF fallback extraction")
+                doc = fitz.open(file_path)
+                for i in range(min(num_pages, 100)):
+                    page_text = doc[i].get_text() or ""
+                    text += page_text + "\n\n"
+                doc.close()
+                logger.info("PyMuPDF fallback extraction successful")
+            except Exception as mupdf_error:
+                logger.warning(f"PyMuPDF fallback failed: {mupdf_error}, trying pypdf")
+                # Fall back to original pypdf
+                for i in range(min(num_pages, 100)):  # Limit to 100 pages
+                    page_text = reader.pages[i].extract_text() or ""
+                    text += page_text + "\n\n"
         
         # Process the text to clean up common PDF extraction issues in financial documents
         processed_text = text.replace("$", "$ ")  # Add space after dollar signs for better recognition
         processed_text = processed_text.replace("  ", " ")  # Remove double spaces
+        
+        # Additional processing for financial documents
+        processed_text = processed_text.replace("(", " (")  # Add space before parentheses for negative numbers
+        processed_text = processed_text.replace("%", "% ")  # Add space after percentage signs
+        processed_text = processed_text.replace("million", " million ")  # Ensure spacing around financial terms
+        processed_text = processed_text.replace("billion", " billion ")
         
         logger.info(f"Extracted {len(processed_text)} characters of text from PDF")
         return processed_text.strip()
@@ -98,6 +189,7 @@ def extract_structured_data(text: str, schema: Optional[Dict[str, Any]] = None) 
     """
     Extract structured data from text using OpenAI services via LangChain.
     Optimized for performance with reduced token count.
+    Enhanced to handle complex financial data like Morgan Stanley 10K.
     
     Args:
         text: The text to extract data from
@@ -107,8 +199,11 @@ def extract_structured_data(text: str, schema: Optional[Dict[str, Any]] = None) 
         Extracted structured data as a dictionary
     """
     # If text is too long, truncate it more aggressively to reduce token usage
-    if len(text) > 12000:
-        text = text[:12000] + "...(text truncated for processing)"
+    if len(text) > 14000:
+        text = text[:14000] + "...(text truncated for processing)"
+    
+    # Check if the document likely contains Morgan Stanley content
+    is_morgan_stanley = "Morgan Stanley" in text[:5000]
     
     # Prepare system message for the extraction
     system_prompt = (
@@ -127,6 +222,19 @@ def extract_structured_data(text: str, schema: Optional[Dict[str, Any]] = None) 
         "Be concise and direct in your extraction. For fields like 'Business Segment Financial Performance', "
         "extract a summary of performance across the company's main business segments or divisions."
     )
+    
+    # Add specialized instructions for Morgan Stanley 10K format
+    if is_morgan_stanley:
+        system_prompt += (
+            "\n\nThis appears to be a Morgan Stanley annual report. For Morgan Stanley specifically:"
+            "\n1. Net Interest Income is often reported as a line item in their Consolidated Income Statement"
+            "\n2. Total operating expenses might be listed as 'Non-interest expenses' or 'Total non-interest expenses'"
+            "\n3. Morgan Stanley reports on three main business segments: Institutional Securities, Wealth Management, and Investment Management"
+            "\n4. Financial data is typically reported in millions of dollars"
+            "\n5. Look for tables with clear financial measurements across multiple years, focus on the most recent year"
+            "\n6. Page numbers 60-75 often contain important consolidated financial statements"
+            "\n7. Business segment information is often found in a dedicated 'Business Segments' section"
+        )
     
     # Add schema information to the prompt if provided
     if schema and "fields" in schema:
@@ -168,6 +276,9 @@ Return the data as a clean JSON object with no explanations.
     human_message = HumanMessage(content=f"Extract structured data from this document text:\n\n{text}")
     
     try:
+        # Initialize response_content variable to avoid possible unbounded reference
+        response_content = ""
+        
         # Get OpenAI client with higher token limit for financial data
         client = get_chat_openai(temperature=0.1, max_tokens=1000)
         
@@ -182,32 +293,27 @@ Return the data as a clean JSON object with no explanations.
             logger.error(f"Received HTML response instead of JSON: {response_content[:100]}...")
             raise Exception("Received HTML error page instead of JSON response. This usually indicates an authentication or API configuration issue.")
         
-        # Clean the content for JSON parsing (simplified version)
-        cleaned_content = response_content
-        if cleaned_content and "```" in cleaned_content:
-            # Extract content between code blocks in one step
-            parts = cleaned_content.split("```")
-            if len(parts) >= 3:  # At least one full code block
-                # Get the content of the first code block
-                cleaned_content = parts[1]
-                # Remove json language identifier if present
-                if cleaned_content.startswith("json"):
-                    cleaned_content = cleaned_content[4:].strip()
-                    
-        # Try to parse the JSON
-        parsed_data = json.loads(cleaned_content)
-        return parsed_data
-        
-    except json.JSONDecodeError as e:
-        # Provide error with truncated details to save memory
-        error_msg = f"Failed to parse JSON response: {str(e)[:100]}"
-        # More robust error handling to prevent unbound variable errors
-        response_preview = ""
         try:
-            if 'response_content' in locals() and response_content:
-                response_preview = response_content[:50] if len(response_content) > 0 else ""
-        except:
-            pass
+            
+            # Clean the content for JSON parsing (simplified version)
+            cleaned_content = response_content
+            if cleaned_content and "```" in cleaned_content:
+                # Extract content between code blocks in one step
+                parts = cleaned_content.split("```")
+                if len(parts) >= 3:  # At least one full code block
+                    # Get the content of the first code block
+                    cleaned_content = parts[1]
+                    # Remove json language identifier if present
+                    if cleaned_content.startswith("json"):
+                        cleaned_content = cleaned_content[4:].strip()
+                        
+            # Try to parse the JSON
+            parsed_data = json.loads(cleaned_content)
+            return parsed_data
+        except json.JSONDecodeError as e:
+            # Provide error with truncated details to save memory
+            error_msg = f"Failed to parse JSON response: {str(e)[:100]}"
+            response_preview = response_content[:50] if response_content else ""
         
         if response_preview:
             error_msg += f". Response preview: {response_preview}..."
