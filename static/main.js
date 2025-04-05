@@ -97,14 +97,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             
-            updateDocumentStatus(documentId, data);
+            // Extract the status data from the response
+            const statusData = data.status || data;
+            
+            updateDocumentStatus(documentId, statusData);
             
             // If still indexing, poll again after a delay
-            if (data.status === 'indexing' || data.status === 'pending') {
+            if (statusData.status === 'indexing' || statusData.status === 'pending') {
                 documentStatusTimer = setTimeout(() => checkDocumentStatus(documentId), 2000);
-            } else if (data.status === 'indexed') {
+            } else if (statusData.status === 'indexed') {
                 // Enable extraction when document is indexed
                 enableExtractionControls(documentId);
+                console.log("Document indexed, enabling extraction controls");
             }
             
         } catch (error) {
@@ -117,6 +121,9 @@ document.addEventListener('DOMContentLoaded', () => {
      */
     function updateDocumentStatus(documentId, data) {
         if (!data) return;
+        
+        // Log the data structure to debug
+        console.log("Status data:", data);
         
         let statusClass = '';
         switch (data.status) {
@@ -136,7 +143,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 statusClass = '';
         }
         
-        const fileName = data.file_name || 'Document';
+        // Get filename from the appropriate location in the data structure
+        const fileName = data.file_name || (data.status && data.status.file_name) || 'Document';
+        
+        // Get message from the appropriate location in the data structure
+        const message = data.message || (data.status && data.status.message) || '';
         
         documentStatus.innerHTML = `
             <div class="mb-2">
@@ -144,10 +155,10 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
             <div>
                 <strong>Status:</strong> 
-                <span class="status ${statusClass}">${data.status}</span>
+                <span class="status ${statusClass}">${typeof data.status === 'string' ? data.status : (data.status && data.status.status) || 'Unknown'}</span>
             </div>
             <div class="mt-2 text-secondary">
-                ${data.message || ''}
+                ${message}
             </div>
         `;
     }
