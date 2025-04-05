@@ -52,8 +52,8 @@ def process_document_in_background(document_id, file_path, file_name):
         with open(file_path, "rb") as f:
             file_content = f.read()
         
-        # Add document to vector store
-        result = add_document_to_vector_store(document_id, file_content)
+        # Add document to vector store (pass filename for file type detection)
+        result = add_document_to_vector_store(document_id, file_content, file_name)
         
         if result.get("success", False):
             # Update document status to success

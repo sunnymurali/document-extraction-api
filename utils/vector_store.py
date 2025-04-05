@@ -77,101 +77,126 @@ def get_vector_store(collection_name):
         raise
 
 
-def add_document_to_vector_store(document_id: str, file_content: bytes) -> Dict[str, Any]:
+def add_document_to_vector_store(document_id: str, file_content: bytes, file_name: Optional[str] = None) -> Dict[str, Any]:
     """
     Add a document to the vector store
     
     Args:
         document_id: Unique ID for the document
         file_content: Binary content of the document
+        file_name: Original filename (used for file type detection)
         
     Returns:
         Dictionary with ingestion results
     """
+    tmp_path = None
+    
     try:
-        # Detect if this is a text file by checking the first few bytes
-        is_text_file = False
-        try:
-            # Check if content starts with common text file markers
-            sample = file_content[:20].decode('utf-8', errors='ignore')
-            # Common text file markers include letters, numbers, and basic punctuation
-            if all(c.isprintable() or c.isspace() for c in sample):
-                is_text_file = True
-                logger.info("Detected text file based on content")
-        except Exception:
-            # If we can't decode as text, it's likely binary (PDF or other)
-            pass
-
-        # Create a temporary file with the appropriate extension
-        suffix = ".txt" if is_text_file else ".pdf"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(file_content)
-            tmp_path = tmp.name
+        # Detect if this is a PDF file by checking the header or using filename
+        is_pdf = False
         
-        try:
-            start_time = time.time()
-            collection_name = f"doc_{document_id}"
+        # Check if it's a PDF by file header
+        if file_content.startswith(b'%PDF') or b'%PDF-' in file_content[:1024]:
+            is_pdf = True
+            logger.info("Detected as PDF file based on content")
+        
+        # Check if it's a PDF by filename
+        if file_name and file_name.lower().endswith('.pdf'):
+            is_pdf = True
+            logger.info(f"Detected as PDF file based on filename: {file_name}")
             
-            # Load document with the appropriate loader
-            if is_text_file:
-                logger.info(f"Loading text file {tmp_path}")
-                loader = TextLoader(tmp_path, encoding='utf-8')
-                pages = loader.load()
-            else:
-                logger.info(f"Loading PDF file {tmp_path}")
-                loader = PyPDFLoader(tmp_path)
-                pages = loader.load()
+        # Log file information for debugging
+        logger.info(f"File type detection: is_pdf={is_pdf}, file_name={file_name}")
+        if not is_pdf:
+            # Try to see what the first few bytes look like for debugging
+            logger.info(f"File header preview: {file_content[:50]!r}")
+        
+        start_time = time.time()
+        collection_name = f"doc_{document_id}"
+        
+        # Process document based on file type
+        if is_pdf:
+            # Create a temporary file for the PDF
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+                tmp.write(file_content)
+                tmp_path = tmp.name
             
-            # Store metadata about the document
-            document_metadata[document_id] = {
-                "title": collection_name,
-                "pages": len(pages),
-                "added_at": time.time(),
-                "chunks": 0
-            }
+            logger.info(f"Loading PDF file {tmp_path}")
+            loader = PyPDFLoader(tmp_path)
+            pages = loader.load()
             
-            # Split the document into chunks
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=CHUNK_SIZE,
-                chunk_overlap=CHUNK_OVERLAP,
-                separators=["\n\n", "\n", ".", " ", ""],
-                length_function=len,
-            )
-            
-            chunks = text_splitter.split_documents(pages)
-            
-            # Update metadata
-            document_metadata[document_id]["chunks"] = len(chunks)
-            
-            # Initialize vector store
-            vector_store = get_vector_store(collection_name)
-            
-            # Add chunks to vector store
-            vector_store.add_documents(chunks)
-            
-            # Persist the vector store
-            if hasattr(vector_store, 'persist'):
-                vector_store.persist()
-            
-            processing_time = time.time() - start_time
-            
-            logger.info(f"Document {document_id} added to vector store with {len(chunks)} chunks in {processing_time:.2f} seconds")
-            
-            return {
-                "success": True,
-                "document_id": document_id,
-                "chunks": len(chunks),
-                "pages": len(pages),
-                "processing_time": processing_time
-            }
-        finally:
-            # Clean up the temporary file
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+        else:
+            # Process as text content directly without using TextLoader
+            try:
+                # Try to decode as UTF-8 first
+                text_content = file_content.decode('utf-8', errors='replace')
+                logger.info(f"Processing text content of size {len(text_content)} characters")
+                
+                # Create a document with the text content
+                from langchain_core.documents import Document
+                pages = [Document(page_content=text_content, metadata={"source": f"text-{document_id}"})]
+                
+            except Exception as text_error:
+                logger.error(f"Error processing text content: {str(text_error)}")
+                return {"success": False, "error": f"Error processing text content: {str(text_error)}", "document_id": document_id}
+        
+        # Store metadata about the document
+        document_metadata[document_id] = {
+            "title": collection_name,
+            "pages": len(pages),
+            "added_at": time.time(),
+            "chunks": 0
+        }
+        
+        # Split the document into chunks
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=CHUNK_SIZE,
+            chunk_overlap=CHUNK_OVERLAP,
+            separators=["\n\n", "\n", ".", " ", ""],
+            length_function=len,
+        )
+        
+        chunks = text_splitter.split_documents(pages)
+        
+        # Update metadata
+        document_metadata[document_id]["chunks"] = len(chunks)
+        logger.info(f"Split document into {len(chunks)} chunks")
+        
+        # Initialize vector store
+        vector_store = get_vector_store(collection_name)
+        
+        # Add chunks to vector store
+        vector_store.add_documents(chunks)
+        logger.info(f"Added {len(chunks)} chunks to vector store")
+        
+        # Persist the vector store
+        if hasattr(vector_store, 'persist'):
+            vector_store.persist()
+            logger.info("Persisted vector store")
+        
+        processing_time = time.time() - start_time
+        
+        logger.info(f"Document {document_id} added to vector store with {len(chunks)} chunks in {processing_time:.2f} seconds")
+        
+        return {
+            "success": True,
+            "document_id": document_id,
+            "chunks": len(chunks),
+            "pages": len(pages),
+            "processing_time": processing_time
+        }
                 
     except Exception as e:
         logger.error(f"Error adding document to vector store: {str(e)}")
         return {"success": False, "error": str(e), "document_id": document_id}
+        
+    finally:
+        # Clean up the temporary file
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception as cleanup_error:
+                logger.warning(f"Error cleaning up temporary file: {str(cleanup_error)}")
 
 
 def extract_data_from_vector_store(document_id: str, fields: List[Dict[str, str]], 
