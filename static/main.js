@@ -5,6 +5,8 @@
  */
 
 document.addEventListener('DOMContentLoaded', function() {
+    console.log("Document Data Extractor loaded");
+    
     // General extraction elements
     const uploadForm = document.getElementById('upload-form');
     const fileInput = document.getElementById('document-file');
@@ -16,41 +18,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const copyJsonBtn = document.getElementById('copy-json-btn');
     const schemaInput = document.getElementById('extraction-schema');
     
-    // Progress tracking elements (will be created dynamically if not in DOM)
-    let progressContainer = document.getElementById('progress-container');
-    let progressBar = document.getElementById('extraction-progress');
-    let progressText = document.getElementById('progress-text');
-    
-    // Create progress elements if they don't exist
-    if (!progressContainer) {
-        progressContainer = document.createElement('div');
-        progressContainer.id = 'progress-container';
-        progressContainer.className = 'progress-container mt-3 mb-4 d-none';
-        
-        progressBar = document.createElement('div');
-        progressBar.id = 'extraction-progress';
-        progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated';
-        progressBar.role = 'progressbar';
-        progressBar.setAttribute('aria-valuenow', '0');
-        progressBar.setAttribute('aria-valuemin', '0');
-        progressBar.setAttribute('aria-valuemax', '100');
-        progressBar.style.width = '0%';
-        
-        progressText = document.createElement('div');
-        progressText.id = 'progress-text';
-        progressText.className = 'text-center mt-2';
-        progressText.textContent = 'Starting...';
-        
-        const progressBarContainer = document.createElement('div');
-        progressBarContainer.className = 'progress';
-        progressBarContainer.appendChild(progressBar);
-        
-        progressContainer.appendChild(progressBarContainer);
-        progressContainer.appendChild(progressText);
-        
-        // Insert after the form
-        uploadForm.parentNode.insertBefore(progressContainer, uploadForm.nextSibling);
-    }
+    // Progress tracking elements
+    const progressContainer = document.getElementById('progress-container');
+    const progressBar = document.getElementById('extraction-progress');
+    const progressText = document.getElementById('progress-text');
     
     // Field builder elements
     const fieldsContainer = document.getElementById('fields-container');
@@ -80,6 +51,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Handle form submission - now a two-step process (upload then extract)
     uploadForm.addEventListener('submit', function(event) {
         event.preventDefault();
+        console.log("Form submitted");
         
         // Validate file selection
         if (!fileInput.files || fileInput.files.length === 0) {
@@ -111,6 +83,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     throw new Error(uploadResult.error || 'Document upload failed');
                 }
                 
+                console.log("Document uploaded successfully", uploadResult);
                 showAlert('success', 'Document uploaded successfully');
                 updateProgress('Uploaded document', 20);
                 
@@ -125,6 +98,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     throw new Error(extractionResult.error || 'Failed to start extraction');
                 }
                 
+                console.log("Extraction started", extractionResult);
                 showAlert('info', 'Extraction started. Processing document...');
                 updateProgress('Processing document', 30);
                 
@@ -141,6 +115,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Upload the document to the server
     function uploadDocument() {
+        console.log("Uploading document...");
         // Prepare form data for upload
         const formData = new FormData();
         formData.append('file', fileInput.files[0]);
@@ -154,6 +129,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Start the extraction process
     function startExtraction(documentId) {
+        console.log("Starting extraction for document:", documentId);
         // Prepare the extraction request
         const extractionRequest = {
             document_id: documentId,
@@ -177,6 +153,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Start polling for document status
     function startStatusPolling(documentId) {
+        console.log("Starting status polling for document:", documentId);
         // Clear any existing polling
         stopStatusPolling();
         
@@ -187,6 +164,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (!statusResult.success) {
                         throw new Error(statusResult.error || 'Failed to get document status');
                     }
+                    
+                    console.log("Document status:", statusResult);
                     
                     // Update progress based on status
                     const status = statusResult.status;
@@ -199,6 +178,8 @@ document.addEventListener('DOMContentLoaded', function() {
                         // Fetch the extraction results
                         fetchExtractionResults(documentId)
                             .then(resultData => {
+                                console.log("Extraction results:", resultData);
+                                
                                 // Store the data for copy functionality
                                 extractedData = resultData;
                                 
@@ -249,12 +230,14 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Check document status
     function checkDocumentStatus(documentId) {
+        console.log("Checking status for document:", documentId);
         return fetch(`/api/status/${documentId}`)
             .then(handleResponse);
     }
     
     // Fetch extraction results
     function fetchExtractionResults(documentId) {
+        console.log("Fetching results for document:", documentId);
         return fetch(`/api/result/${documentId}`)
             .then(handleResponse);
     }
@@ -263,6 +246,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function handleResponse(response) {
         // First check if the response is ok
         if (!response.ok) {
+            console.error("Response not OK:", response.status, response.statusText);
             // Check if response is HTML
             if (response.headers.get('content-type')?.includes('text/html')) {
                 return response.text().then(html => {
@@ -414,11 +398,12 @@ document.addEventListener('DOMContentLoaded', function() {
             
             if (className) {
                 progressBar.className = `progress-bar ${className}`;
+            } else {
+                progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated';
             }
         }
-        
         if (progressText) {
-            progressText.textContent = `${message} (${percentage}%)`;
+            progressText.textContent = message;
         }
     }
     
@@ -426,69 +411,70 @@ document.addEventListener('DOMContentLoaded', function() {
      * Update progress based on document status
      */
     function updateProgressFromStatus(status, statusData) {
-        let percentage = 0;
-        let message = '';
-        
         switch (status) {
             case 'pending':
-                percentage = 20;
-                message = 'Waiting to start';
+                updateProgress('Waiting to start processing...', 20);
                 break;
             case 'processing':
-                // For processing, we'll calculate percentage based on fields if available
-                if (statusData.extraction_status && Object.keys(statusData.extraction_status).length > 0) {
+                // Calculate progress based on extraction_status if available
+                if (statusData.extraction_status) {
                     const totalFields = Object.keys(statusData.extraction_status).length;
-                    const completedFields = Object.values(statusData.extraction_status)
-                        .filter(s => s === 'completed').length;
-                    
-                    percentage = 30 + Math.floor((completedFields / totalFields) * 60);
-                    message = `Processed ${completedFields} of ${totalFields} fields`;
+                    if (totalFields > 0) {
+                        const completedFields = Object.values(statusData.extraction_status)
+                            .filter(s => s === 'completed').length;
+                        const percent = 30 + Math.floor((completedFields / totalFields) * 60);
+                        updateProgress(`Processing document (${completedFields}/${totalFields} fields completed)`, percent);
+                    } else {
+                        updateProgress('Processing document...', 50);
+                    }
                 } else {
-                    percentage = 50;
-                    message = 'Processing document';
+                    updateProgress('Processing document...', 50);
                 }
                 break;
             case 'completed':
-                percentage = 90;
-                message = 'Finalizing results';
+                updateProgress('Document processing completed', 100, 'bg-success');
                 break;
             case 'failed':
-                percentage = 100;
-                message = 'Processing failed';
+                updateProgress('Document processing failed', 100, 'bg-danger');
                 break;
             default:
-                percentage = 30;
-                message = 'Processing document';
+                updateProgress('Unknown status', 50);
+                break;
         }
-        
-        updateProgress(message, percentage, status === 'failed' ? 'bg-danger' : null);
     }
     
     /**
      * Show an alert message that fades after a few seconds
      */
     function showAlert(type, message) {
-        // Create alert element
-        const alertEl = document.createElement('div');
-        alertEl.className = `alert alert-${type} alert-dismissible fade show`;
-        alertEl.setAttribute('role', 'alert');
-        alertEl.innerHTML = `
-            ${message}
-            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        // Create alert container if it doesn't exist
+        let alertContainer = document.getElementById('alert-container');
+        if (!alertContainer) {
+            alertContainer = document.createElement('div');
+            alertContainer.id = 'alert-container';
+            alertContainer.className = 'alert-container position-fixed top-0 start-50 translate-middle-x p-3';
+            alertContainer.style.zIndex = '1050';
+            document.body.appendChild(alertContainer);
+        }
+        
+        // Create alert
+        const alertId = 'alert-' + Date.now();
+        const alertHtml = `
+            <div id="${alertId}" class="alert alert-${type} alert-dismissible fade show" role="alert">
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
         `;
         
-        // Add to the container after the header
-        const header = document.querySelector('header');
-        header.insertAdjacentElement('afterend', alertEl);
+        // Add alert to container
+        alertContainer.insertAdjacentHTML('beforeend', alertHtml);
         
         // Auto-dismiss after 5 seconds
         setTimeout(() => {
-            try {
-                const bsAlert = new bootstrap.Alert(alertEl);
+            const alert = document.getElementById(alertId);
+            if (alert) {
+                const bsAlert = new bootstrap.Alert(alert);
                 bsAlert.close();
-            } catch (e) {
-                // Fallback if bootstrap is not available
-                alertEl.remove();
             }
         }, 5000);
     }
@@ -497,6 +483,8 @@ document.addEventListener('DOMContentLoaded', function() {
      * Syntax highlight JSON for display
      */
     function syntaxHighlight(json) {
+        if (!json) return '';
+        
         json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
             let cls = 'json-number';
@@ -515,128 +503,79 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Reset file input when modal is closed
-    fileInput.addEventListener('change', function() {
-        if (this.files.length > 0) {
-            // Show file name
-            const fileName = this.files[0].name;
-            this.nextElementSibling = fileName;
-        }
-    });
-    
-    // Add example schema button
-    const exampleBtn = document.createElement('button');
-    exampleBtn.type = 'button';
-    exampleBtn.className = 'btn btn-sm btn-link mt-1';
-    exampleBtn.textContent = 'Load Example Schema';
-    exampleBtn.addEventListener('click', function() {
-        const exampleSchema = {
-            "fields": [
-                {"name": "invoice_number", "description": "The invoice identification number"},
-                {"name": "date", "description": "The invoice date"},
-                {"name": "total_amount", "description": "The total amount due"},
-                {"name": "customer", "description": "Customer name and details"},
-                {"name": "items", "description": "List of items, quantities and prices"}
-            ]
-        };
-        schemaInput.value = JSON.stringify(exampleSchema, null, 2);
-    });
-    
-    // Insert the button after the schema input
-    schemaInput.parentElement.appendChild(exampleBtn);
-
-    // Field builder UI
+    // Field builder functionality
     if (addFieldBtn) {
         addFieldBtn.addEventListener('click', function() {
             addField();
             updateFieldDisplay();
         });
     }
-
-    // Toggle schema JSON view
-    if (toggleJsonViewBtn) {
-        toggleJsonViewBtn.addEventListener('click', function() {
-            jsonSchemaContainer.classList.toggle('d-none');
-            fieldsBuilder.classList.toggle('d-none');
-            
-            if (jsonSchemaContainer.classList.contains('d-none')) {
-                toggleJsonViewBtn.textContent = 'Edit as JSON';
-                // Update fields from JSON
-                updateFieldsFromSchema();
-            } else {
-                toggleJsonViewBtn.textContent = 'Builder View';
-                // Update JSON from fields
-                updateSchemaFromFields();
-            }
-        });
-    }
-
+    
     function addField(name = '', description = '') {
-        const fieldId = 'field-' + fieldCount++;
-        
-        const fieldDiv = document.createElement('div');
-        fieldDiv.className = 'field-item mb-3 p-3 border rounded';
-        fieldDiv.id = fieldId;
-        
-        fieldDiv.innerHTML = `
-            <div class="row align-items-center">
-                <div class="col">
-                    <div class="mb-2">
-                        <label class="form-label">Field Name</label>
-                        <input type="text" class="form-control field-name" value="${name}" placeholder="e.g., invoice_number">
+        const fieldId = `field-${fieldCount++}`;
+        const fieldHtml = `
+            <div class="field-item card mb-2" id="${fieldId}">
+                <div class="card-body p-3">
+                    <div class="row g-2">
+                        <div class="col-md-5">
+                            <label class="form-label" for="${fieldId}-name">Field Name</label>
+                            <input type="text" class="form-control field-name" id="${fieldId}-name" value="${name}" placeholder="e.g. total_amount">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="${fieldId}-desc">Description</label>
+                            <input type="text" class="form-control field-desc" id="${fieldId}-desc" value="${description}" placeholder="e.g. The total invoice amount">
+                        </div>
+                        <div class="col-md-1 d-flex align-items-end">
+                            <button type="button" class="btn btn-outline-danger remove-field-btn" data-field-id="${fieldId}">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
-                <div class="col-auto">
-                    <button type="button" class="btn btn-danger btn-sm remove-field">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-            </div>
-            <div class="mb-0">
-                <label class="form-label">Description</label>
-                <textarea class="form-control field-description" rows="2" placeholder="Describe what should be extracted">${description}</textarea>
             </div>
         `;
         
-        // Add event listener for remove button
-        fieldDiv.querySelector('.remove-field').addEventListener('click', function() {
-            fieldDiv.remove();
-            updateFieldDisplay();
-            updateSchemaFromFields();
+        fieldsContainer.insertAdjacentHTML('beforeend', fieldHtml);
+        
+        // Add event listener to the remove button
+        const removeBtn = fieldsContainer.querySelector(`#${fieldId} .remove-field-btn`);
+        removeBtn.addEventListener('click', function() {
+            const fieldId = this.getAttribute('data-field-id');
+            const fieldElement = document.getElementById(fieldId);
+            if (fieldElement) {
+                fieldElement.remove();
+                updateFieldDisplay();
+            }
         });
         
-        // Add event listeners for input changes
-        const inputs = fieldDiv.querySelectorAll('input, textarea');
-        inputs.forEach(input => {
-            input.addEventListener('input', updateSchemaFromFields);
-        });
+        // Add input change listeners
+        const nameInput = fieldsContainer.querySelector(`#${fieldId}-name`);
+        const descInput = fieldsContainer.querySelector(`#${fieldId}-desc`);
         
-        // Append to the container
-        fieldsContainer.appendChild(fieldDiv);
+        nameInput.addEventListener('input', updateSchemaFromFields);
+        descInput.addEventListener('input', updateSchemaFromFields);
         
-        return fieldDiv;
+        return fieldId;
     }
     
     function updateFieldDisplay() {
-        const fieldItems = fieldsContainer.querySelectorAll('.field-item');
+        const hasFields = fieldsContainer.querySelectorAll('.field-item').length > 0;
         
-        if (fieldItems.length === 0) {
-            noFieldsMessage.classList.remove('d-none');
-        } else {
+        if (hasFields) {
             noFieldsMessage.classList.add('d-none');
+        } else {
+            noFieldsMessage.classList.remove('d-none');
         }
         
-        // Update the schema
         updateSchemaFromFields();
     }
     
     function updateSchemaFromFields() {
-        const fieldItems = fieldsContainer.querySelectorAll('.field-item');
         const fields = [];
         
-        fieldItems.forEach(item => {
-            const nameInput = item.querySelector('.field-name');
-            const descInput = item.querySelector('.field-description');
+        fieldsContainer.querySelectorAll('.field-item').forEach(field => {
+            const nameInput = field.querySelector('.field-name');
+            const descInput = field.querySelector('.field-desc');
             
             if (nameInput.value.trim()) {
                 fields.push({
@@ -646,278 +585,251 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
         
-        const schema = { fields };
+        const schema = {
+            fields: fields
+        };
+        
         schemaInput.value = JSON.stringify(schema, null, 2);
     }
     
     function updateFieldsFromSchema() {
         try {
             if (!schemaInput.value.trim()) {
+                // Clear fields if schema is empty
+                fieldsContainer.innerHTML = '';
+                updateFieldDisplay();
                 return;
             }
             
             const schema = JSON.parse(schemaInput.value);
             
-            // Clear existing fields
-            fieldsContainer.innerHTML = '';
-            fieldCount = 0;
-            
-            // Add fields from schema
-            if (schema.fields && Array.isArray(schema.fields)) {
-                schema.fields.forEach(field => {
-                    addField(field.name || '', field.description || '');
-                });
+            if (!schema.fields || !Array.isArray(schema.fields)) {
+                return;
             }
             
-            updateFieldDisplay();
+            // Clear existing fields
+            fieldsContainer.innerHTML = '';
             
+            // Add fields from schema
+            schema.fields.forEach(field => {
+                addField(field.name || '', field.description || '');
+            });
+            
+            updateFieldDisplay();
         } catch (e) {
-            console.error('Error parsing schema:', e);
-            showAlert('danger', 'Invalid schema format: ' + e.message);
+            console.error('Error parsing schema JSON:', e);
         }
     }
     
-    // Initialize fields builder if schema is provided
-    updateFieldsFromSchema();
-
-    // Variable to store extracted tables data
-    let extractedTablesData = null;
-
-    // Handle table extraction form submission
-    tablesForm.addEventListener('submit', function(event) {
-        event.preventDefault();
-        
-        // Validate file selection
-        if (!tablesFileInput.files || tablesFileInput.files.length === 0) {
-            showAlert('danger', 'Please select a PDF file to upload');
-            return;
-        }
-        
-        // Validate file type
-        const fileName = tablesFileInput.files[0].name;
-        if (!fileName.toLowerCase().endsWith('.pdf')) {
-            showAlert('danger', 'Only PDF files are supported for table extraction');
-            return;
-        }
-        
-        // Start loading state for tables
-        startTablesLoading();
-        
-        // Prepare form data for upload
-        const formData = new FormData();
-        formData.append('file', tablesFileInput.files[0]);
-        
-        // Make the API request to extract tables
-        fetch('/api/extract-tables', {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => {
-            // Check if response is OK
-            if (!response.ok) {
-                // Check if response is HTML
-                if (response.headers.get('content-type')?.includes('text/html')) {
-                    return response.text().then(html => {
-                        throw new Error('Server returned HTML instead of JSON. This typically indicates a server error or authorization problem.');
-                    });
-                }
-                throw new Error(`Server responded with status ${response.status}`);
-            }
+    // Toggle between JSON and field builder
+    if (toggleJsonViewBtn) {
+        toggleJsonViewBtn.addEventListener('click', function() {
+            const isJsonView = !jsonSchemaContainer.classList.contains('d-none');
             
-            // Check for timeout or other errors
-            const contentType = response.headers.get('content-type');
-            if (!contentType || !contentType.includes('application/json')) {
-                throw new Error('Server response was not in JSON format. The operation might have timed out or encountered an error.');
-            }
-            
-            return response.json();
-        })
-        .then(data => {
-            // Store the data for copy functionality
-            extractedTablesData = data;
-            
-            // Display table results
-            displayTablesResults(data);
-            
-            // Enable copy button
-            copyTablesJsonBtn.disabled = false;
-            
-            // Show success message
-            if (data.success && data.tables && data.tables.length > 0) {
-                showAlert('success', `Successfully extracted ${data.total_tables} tables from ${data.pages_processed} pages`);
-            } else if (data.success && (!data.tables || data.tables.length === 0)) {
-                showAlert('warning', 'No tables found in the document');
+            if (isJsonView) {
+                // Switch to field builder view
+                jsonSchemaContainer.classList.add('d-none');
+                fieldsBuilder.classList.remove('d-none');
+                toggleJsonViewBtn.textContent = 'Edit as JSON';
+                
+                // Update fields from JSON
+                updateFieldsFromSchema();
             } else {
-                showAlert('warning', 'Table extraction completed with errors: ' + data.error);
+                // Switch to JSON view
+                jsonSchemaContainer.classList.remove('d-none');
+                fieldsBuilder.classList.add('d-none');
+                toggleJsonViewBtn.textContent = 'Visual Editor';
+                
+                // Update JSON from fields
+                updateSchemaFromFields();
             }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            
-            // Show more user-friendly error message for common errors
-            if (error.message.includes('timed out') || error.message.includes('not in JSON format')) {
-                showAlert('danger', 'The table extraction process timed out. Please try with a smaller PDF document or fewer pages.');
-            } else if (error.message.includes('Unexpected token')) {
-                showAlert('danger', 'Failed to parse server response. This usually indicates an API configuration issue with Azure OpenAI.');
-            } else if (error.message.includes('HTML instead of JSON')) {
-                showAlert('danger', 'Authentication error with Azure OpenAI. Please check your API credentials.');
-            } else {
-                showAlert('danger', 'Failed to process document: ' + error.message);
-            }
-            
-            // Reset table results area
-            tablesResultsContainer.innerHTML = `
-                <div class="alert alert-danger">
-                    <h4 class="alert-heading">Table Extraction Failed</h4>
-                    <p class="mb-0">The document processing may have timed out because:</p>
-                    <ul>
-                        <li>The PDF is too large or contains too many pages</li>
-                        <li>The tables are too complex for extraction</li>
-                        <li>There was a network error during processing</li>
-                    </ul>
-                    <p>Try with a smaller document or fewer pages.</p>
-                </div>
-            `;
-        })
-        .finally(() => {
-            stopTablesLoading();
         });
-    });
-
+    }
+    
+    // Table extraction form
+    if (tablesForm) {
+        tablesForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            
+            // Validate file selection
+            if (!tablesFileInput.files || tablesFileInput.files.length === 0) {
+                showAlert('danger', 'Please select a PDF file to extract tables from');
+                return;
+            }
+            
+            // Start loading state
+            startTablesLoading();
+            
+            // Prepare form data
+            const formData = new FormData();
+            formData.append('file', tablesFileInput.files[0]);
+            
+            // Send request
+            fetch('/api/extract-tables', {
+                method: 'POST',
+                body: formData
+            })
+            .then(handleResponse)
+            .then(data => {
+                // Display results
+                displayTablesResults(data);
+                
+                // Enable copy button
+                copyTablesJsonBtn.disabled = false;
+                
+                if (data.success) {
+                    showAlert('success', 'Tables extracted successfully');
+                } else {
+                    showAlert('warning', data.error || 'No tables could be extracted from the document');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showAlert('danger', 'Error: ' + error.message);
+                
+                // Reset display
+                tablesResultsContainer.innerHTML = `
+                    <div class="alert alert-danger">
+                        <h4 class="alert-heading">Extraction Failed</h4>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            })
+            .finally(() => {
+                stopTablesLoading();
+            });
+        });
+    }
+    
+    // Copy tables JSON button
+    if (copyTablesJsonBtn) {
+        copyTablesJsonBtn.addEventListener('click', function() {
+            // Get current table selector value
+            const tableId = tableSelector.value;
+            const tableData = window.extractedTables ? window.extractedTables[tableId] : null;
+            
+            if (!tableData && !window.extractedTables) {
+                showAlert('warning', 'No table data available to copy');
+                return;
+            }
+            
+            // Copy either the selected table or all tables
+            const jsonStr = tableData ? 
+                JSON.stringify(tableData, null, 2) : 
+                JSON.stringify(window.extractedTables, null, 2);
+            
+            navigator.clipboard.writeText(jsonStr).then(
+                function() {
+                    showAlert('info', 'Table data copied to clipboard');
+                    // Visual feedback
+                    copyTablesJsonBtn.innerText = 'Copied!';
+                    setTimeout(() => {
+                        copyTablesJsonBtn.innerText = 'Copy JSON';
+                    }, 2000);
+                },
+                function() {
+                    showAlert('danger', 'Failed to copy to clipboard');
+                }
+            );
+        });
+    }
+    
     /**
      * Display table extraction results
      */
     function displayTablesResults(data) {
         // Clear previous results
         tablesResultsContainer.innerHTML = '';
-        tableSelector.innerHTML = '';
+        tableSelector.innerHTML = '<option selected disabled>Select a table to view</option>';
+        tableSelector.classList.add('d-none');
         
         if (data.success && data.tables && data.tables.length > 0) {
-            // Create table selector options
-            tableSelector.innerHTML = '<option value="" selected disabled>Select a table to view</option>';
-            
+            // Store tables in global variable for copy functionality
+            window.extractedTables = {};
             data.tables.forEach((table, index) => {
-                const option = document.createElement('option');
-                option.value = index;
-                option.textContent = `Table ${index + 1}${table.caption ? ': ' + table.caption.substring(0, 30) : ''}`;
-                tableSelector.appendChild(option);
+                window.extractedTables[`table-${index}`] = table;
+                
+                // Add option to table selector
+                tableSelector.insertAdjacentHTML('beforeend', `
+                    <option value="table-${index}">Table ${index + 1}</option>
+                `);
             });
             
-            // Show table selector
-            tableSelector.classList.remove('d-none');
-            
-            // Display processing summary
-            tablesResultsContainer.innerHTML = `
-                <div class="alert alert-info mb-3">
-                    <h5>Processing Results</h5>
-                    <p>Found ${data.tables.length} tables in ${data.pages_processed} pages. Select a table from the dropdown to view details.</p>
-                </div>
-                <div id="table-details"></div>
-            `;
-            
-            // Set up event listener for table selection
-            tableSelector.addEventListener('change', function() {
-                const selectedIndex = this.value;
-                if (selectedIndex !== '') {
-                    displayTableDetails(data.tables[selectedIndex]);
-                }
-            });
-        } else if (data.success && (!data.tables || data.tables.length === 0)) {
-            // No tables found
+            // Show table selector if more than one table
+            if (data.tables.length > 1) {
+                tableSelector.classList.remove('d-none');
+                tableSelector.addEventListener('change', function() {
+                    const tableId = this.value;
+                    displayTableDetails(window.extractedTables[tableId]);
+                });
+                
+                // Display overview
+                tablesResultsContainer.innerHTML = `
+                    <div class="alert alert-info">
+                        <h5>${data.tables.length} tables found in document</h5>
+                        <p>Select a table from the dropdown to view details</p>
+                    </div>
+                `;
+            } else {
+                // Display the single table
+                displayTableDetails(data.tables[0]);
+            }
+        } else {
+            // No tables found or error
             tablesResultsContainer.innerHTML = `
                 <div class="alert alert-warning">
                     <h4 class="alert-heading">No Tables Found</h4>
-                    <p>No tables were detected in the document. This might be because:</p>
-                    <ul>
-                        <li>The document doesn't contain any tables</li>
-                        <li>Tables in the document are not structured in a way that can be recognized</li>
-                        <li>The PDF may contain scanned images of tables rather than actual table structures</li>
-                    </ul>
+                    <p>${data.error || 'No tables could be extracted from the document'}</p>
                 </div>
             `;
-            
-            // Hide table selector
-            tableSelector.classList.add('d-none');
-        } else {
-            // Error case
-            tablesResultsContainer.innerHTML = `
-                <div class="alert alert-danger">
-                    <h4 class="alert-heading">Extraction Failed</h4>
-                    <p>${data.error || 'An unknown error occurred during table extraction'}</p>
-                </div>
-            `;
-            
-            // Hide table selector
-            tableSelector.classList.add('d-none');
         }
     }
-
+    
     /**
      * Display details of a specific table
      */
     function displayTableDetails(tableData) {
-        const tableDetails = document.getElementById('table-details');
+        if (!tableData) return;
         
-        // Create the table details view
-        let detailsHtml = `
-            <div class="card mb-4">
+        const tableHtml = renderTableHtml(tableData);
+        
+        tablesResultsContainer.innerHTML = `
+            <div class="card mb-3">
                 <div class="card-header">
-                    <h3 class="card-title h5 mb-0">${tableData.caption || 'Table Details'}</h3>
+                    <h5 class="card-title mb-0">Table Preview</h5>
+                </div>
+                <div class="card-body table-responsive">
+                    ${tableHtml}
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Table Data (JSON)</h5>
                 </div>
                 <div class="card-body">
-        `;
-        
-        // Add metadata
-        detailsHtml += `
-            <div class="mb-3">
-                <h6>Table Information</h6>
-                <ul class="list-unstyled">
-                    <li><strong>Page:</strong> ${tableData.page_number || 'Unknown'}</li>
-                    <li><strong>Rows:</strong> ${tableData.rows?.length || 0}</li>
-                    <li><strong>Columns:</strong> ${tableData.headers?.length || 0}</li>
-                </ul>
-            </div>
-        `;
-        
-        // Render table if we have rows and columns
-        if (tableData.rows && tableData.rows.length > 0) {
-            detailsHtml += renderTableHtml(tableData);
-        } else {
-            detailsHtml += `
-                <div class="alert alert-warning">
-                    <p>Table structure could not be properly extracted.</p>
-                </div>
-            `;
-        }
-        
-        // Add raw data section
-        detailsHtml += `
-            <div class="mt-4">
-                <h6>Raw Data</h6>
-                <pre class="json-display">${syntaxHighlight(JSON.stringify(tableData, null, 2))}</pre>
-            </div>
-        `;
-        
-        // Close the card
-        detailsHtml += `
+                    <pre class="json-display">${syntaxHighlight(JSON.stringify(tableData, null, 2))}</pre>
                 </div>
             </div>
         `;
-        
-        // Update the table details container
-        tableDetails.innerHTML = detailsHtml;
     }
-
+    
     /**
      * Render HTML for a table
      */
     function renderTableHtml(tableData) {
-        let tableHtml = '<div class="table-responsive"><table class="table table-bordered table-striped">';
+        if (!tableData || !tableData.data || !tableData.data.length) {
+            return '<div class="alert alert-warning">No data available for this table</div>';
+        }
+        
+        const headers = tableData.headers || [];
+        const rows = tableData.data;
+        
+        let tableHtml = '<table class="table table-bordered table-striped">';
         
         // Add headers if available
-        if (tableData.headers && tableData.headers.length > 0) {
+        if (headers.length > 0) {
             tableHtml += '<thead><tr>';
-            tableData.headers.forEach(header => {
+            headers.forEach(header => {
                 tableHtml += `<th>${header}</th>`;
             });
             tableHtml += '</tr></thead>';
@@ -925,49 +837,31 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Add body
         tableHtml += '<tbody>';
-        
-        if (tableData.rows && tableData.rows.length > 0) {
-            tableData.rows.forEach(row => {
-                tableHtml += '<tr>';
-                
-                if (Array.isArray(row)) {
-                    row.forEach(cell => {
-                        tableHtml += `<td>${cell}</td>`;
-                    });
-                } else if (typeof row === 'object') {
-                    // If rows are objects with named properties, use headers to determine order
-                    if (tableData.headers && tableData.headers.length > 0) {
-                        tableData.headers.forEach(header => {
-                            tableHtml += `<td>${row[header] || ''}</td>`;
-                        });
-                    } else {
-                        // If no headers, just show the values
-                        Object.values(row).forEach(value => {
-                            tableHtml += `<td>${value}</td>`;
-                        });
-                    }
-                }
-                
-                tableHtml += '</tr>';
-            });
-        }
-        
-        tableHtml += '</tbody></table></div>';
+        rows.forEach(row => {
+            tableHtml += '<tr>';
+            if (Array.isArray(row)) {
+                row.forEach(cell => {
+                    tableHtml += `<td>${cell}</td>`;
+                });
+            } else {
+                // Handle non-array rows (shouldn't happen with proper data)
+                tableHtml += `<td>${JSON.stringify(row)}</td>`;
+            }
+            tableHtml += '</tr>';
+        });
+        tableHtml += '</tbody></table>';
         
         return tableHtml;
     }
-
+    
     /**
      * Start loading state for table extraction
      */
     function startTablesLoading() {
         extractTablesBtn.disabled = true;
         tablesLoadingSpinner.classList.remove('d-none');
-        // Reset table selector
-        tableSelector.innerHTML = '';
-        tableSelector.classList.add('d-none');
     }
-
+    
     /**
      * Stop loading state for table extraction
      */
@@ -975,24 +869,9 @@ document.addEventListener('DOMContentLoaded', function() {
         extractTablesBtn.disabled = false;
         tablesLoadingSpinner.classList.add('d-none');
     }
-
-    // Copy tables JSON button
-    copyTablesJsonBtn.addEventListener('click', function() {
-        if (!extractedTablesData) return;
-        
-        const jsonStr = JSON.stringify(extractedTablesData, null, 2);
-        navigator.clipboard.writeText(jsonStr).then(
-            function() {
-                showAlert('info', 'Tables JSON copied to clipboard');
-                // Visual feedback
-                copyTablesJsonBtn.innerText = 'Copied!';
-                setTimeout(() => {
-                    copyTablesJsonBtn.innerText = 'Copy JSON';
-                }, 2000);
-            },
-            function() {
-                showAlert('danger', 'Failed to copy to clipboard');
-            }
-        );
-    });
+    
+    // Add initial field if no fields are defined
+    if (fieldsContainer && fieldsContainer.children.length === 0) {
+        updateFieldDisplay();
+    }
 });
