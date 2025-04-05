@@ -35,4 +35,6 @@ uv.lock
 # Application specific
 uploads/*
 !uploads/.gitkeep
+vector_db/*
+!vector_db/.gitkeep
 .DS_Store
