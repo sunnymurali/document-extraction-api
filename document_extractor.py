@@ -723,11 +723,16 @@ def extract_using_vector_store(document_id: str, fields: List[Dict[str, str]]) -
         # Import vector store utilities here to avoid circular imports
         from utils.vector_store import extract_data_from_vector_store
         
+        logger.info(f"Extracting data from vector store for document {document_id}")
+        
         # Query the vector store for the specified fields
         result = extract_data_from_vector_store(document_id, fields)
         
         if not result.get("success", False):
+            logger.error(f"Error from vector store: {result.get('error', 'Unknown error')}")
             raise Exception(result.get("error", "Unknown error retrieving data from vector store"))
+        
+        logger.info(f"Successfully extracted data from vector store: {list(result.get('data', {}).keys())}")
         
         return {
             "success": True,
