@@ -429,6 +429,12 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
+        // Make sure the pre element is visible
+        preElement.classList.remove('d-none');
+        
+        // Make sure the pre element is visible by removing the d-none class
+        preElement.classList.remove('d-none');
+        
         // Store the extracted data for the copy button
         extractedData = data;
         

@@ -80,7 +80,7 @@ def generate_document_id() -> str:
 
 def store_document(filename: str, file_content: bytes) -> DocumentUploadResponse:
     """
-    Store a document in the document store
+    Store a document in the document store and add it to ChromaDB vector store
     
     Args:
         filename: Original filename
@@ -98,14 +98,44 @@ def store_document(filename: str, file_content: bytes) -> DocumentUploadResponse
             "id": document_id,
             "filename": filename,
             "upload_time": time.time(),
-            "status": "pending", 
-            "extraction_status": {}
+            "status": "indexing",  # Changed from 'pending' to indicate vectorization
+            "extraction_status": {},
+            "error": None
         }
         
         # Store the binary content
         document_binary_store[document_id] = file_content
         
-        logger.info(f"Document {document_id} ({filename}) stored successfully")
+        logger.info(f"Document {document_id} ({filename}) stored successfully, starting vectorization")
+        
+        # Import inside function to avoid circular imports
+        from utils.vector_store import add_document_to_vector_store
+        
+        # Start a background thread to add the document to the vector store
+        def vectorization_worker():
+            try:
+                # Add the document to the vector store
+                result = add_document_to_vector_store(document_id, file_content)
+                
+                if result.get("success", False):
+                    # Update document status to indicate successful vectorization
+                    document_store[document_id]["status"] = "ready"
+                    logger.info(f"Document {document_id} vectorized successfully with {result.get('chunks', 0)} chunks")
+                else:
+                    # Update document status to indicate failed vectorization
+                    document_store[document_id]["status"] = "failed"
+                    document_store[document_id]["error"] = result.get("error", "Unknown error during vectorization")
+                    logger.error(f"Error vectorizing document {document_id}: {result.get('error')}")
+            except Exception as e:
+                # Update document status to indicate failed vectorization
+                document_store[document_id]["status"] = "failed"
+                document_store[document_id]["error"] = str(e)
+                logger.error(f"Error in vectorization worker for document {document_id}: {str(e)}")
+        
+        # Start the vectorization in a background thread
+        thread = threading.Thread(target=vectorization_worker)
+        thread.daemon = True
+        thread.start()
         
         return DocumentUploadResponse(
             success=True,
@@ -156,16 +186,20 @@ def get_extraction_result(document_id: str) -> Optional[Dict[str, Any]]:
 def async_extract_document(document_id: str, schema: Optional[Dict[str, Any]] = None, 
                           use_chunking: bool = True, callback=None):
     """
-    Extract data from a document asynchronously
+    Extract data from a document asynchronously using ChromaDB vector storage
+    
+    This function supports both PDF and text files. It first tries to use the vector store
+    for extraction, but falls back to direct extraction if there are issues with the vector store.
     
     Args:
         document_id: ID of the document
         schema: Optional schema defining the fields to extract
-        use_chunking: Whether to use document chunking for large documents
+        use_chunking: Whether to use document chunking for large documents (ignored when using vector store)
         callback: Optional callback function to call when extraction is complete
     """
     # Import here to avoid circular imports
-    from document_extractor import extract_from_binary_data, extract_structured_data
+    from document_extractor import extract_structured_data, extract_document_data
+    from utils.vector_store import extract_data_from_vector_store
     
     # Field-specific extraction locks to prevent race conditions
     field_locks = {}
@@ -183,153 +217,147 @@ def async_extract_document(document_id: str, schema: Optional[Dict[str, Any]] = 
             "completed_time": None
         }
     
-    def extract_single_field(field_name, field_description, text_content):
-        """Extract a single field from the document text"""
-        try:
-            logger.info(f"Starting extraction for field: {field_name}")
-            
-            # Update field status to processing
-            with field_locks.get(field_name, threading.Lock()):
-                document_store[document_id]["extraction_status"][field_name] = "processing"
-            
-            # Create a schema for just this one field
-            field_schema = {
-                "fields": [
-                    {"name": field_name, "description": field_description}
-                ]
-            }
-            
-            # Extract just this one field
-            field_result = extract_structured_data(text_content, field_schema)
-            
-            # Store the result for this field
-            with field_locks.get(field_name, threading.Lock()):
-                # Update the main extraction results for this field
-                if field_name in field_result:
-                    extraction_results[document_id]["data"][field_name] = field_result[field_name]
-                    field_results[field_name] = field_result[field_name]
-                else:
-                    # Handle case where field wasn't found but no error occurred
-                    extraction_results[document_id]["data"][field_name] = None
-                    field_results[field_name] = None
-                
-                # Mark this field as completed
-                document_store[document_id]["extraction_status"][field_name] = "completed"
-            
-            logger.info(f"Completed extraction for field: {field_name}")
-            
-        except Exception as e:
-            logger.error(f"Error extracting field {field_name}: {str(e)}")
-            
-            with field_locks.get(field_name, threading.Lock()):
-                # Mark this field as failed
-                document_store[document_id]["extraction_status"][field_name] = "failed"
-                # Still store null for this field since it failed
-                extraction_results[document_id]["data"][field_name] = None
-                field_results[field_name] = None
-    
     def extraction_worker():
         try:
             # Update document status to processing
             document_store[document_id]["status"] = "processing"
             
-            # Get the binary content
+            # If we don't have a schema with fields, we can't use the vector store effectively
+            if not schema or "fields" not in schema:
+                error_msg = "A schema with fields is required for extraction"
+                document_store[document_id]["status"] = "failed"
+                document_store[document_id]["error"] = error_msg
+                extraction_results[document_id]["success"] = False
+                extraction_results[document_id]["error"] = error_msg
+                extraction_results[document_id]["completed_time"] = time.time()
+                
+                logger.error(f"Error extracting data from document {document_id}: {error_msg}")
+                
+                # Call the callback if provided
+                if callback:
+                    callback(document_id, {"success": False, "error": error_msg})
+                return
+            
+            # Try using vector store first, with fallback to direct extraction
+            logger.info(f"Attempting to extract data from document {document_id} using vector store")
+            
+            # Check if document binary content is available
+            if document_id not in document_binary_store:
+                error_msg = f"Document binary content not found for {document_id}"
+                document_store[document_id]["status"] = "failed"
+                document_store[document_id]["error"] = error_msg
+                extraction_results[document_id]["success"] = False
+                extraction_results[document_id]["error"] = error_msg
+                extraction_results[document_id]["completed_time"] = time.time()
+                
+                logger.error(error_msg)
+                
+                # Call the callback if provided
+                if callback:
+                    callback(document_id, {"success": False, "error": error_msg})
+                return
+            
+            # Try vector store extraction first
+            try:
+                # Check if status indicates we should use vector store
+                if document_store[document_id].get("status") in ["ready", "processing"]:
+                    logger.info(f"Using vector store extraction for document {document_id}")
+                    result = extract_data_from_vector_store(document_id, schema["fields"])
+                    
+                    if result.get("success", False):
+                        # Extraction succeeded with vector store
+                        document_store[document_id]["status"] = "completed"
+                        extraction_results[document_id]["success"] = True
+                        extraction_results[document_id]["data"] = result.get("data", {})
+                        extraction_results[document_id]["completed_time"] = time.time()
+                        
+                        # Update extraction status for each field
+                        field_progress = result.get("field_progress", {})
+                        for field_name, status in field_progress.items():
+                            document_store[document_id]["extraction_status"][field_name] = status
+                        
+                        logger.info(f"Document {document_id} extraction completed successfully using vector store")
+                        
+                        # Remove the document from active jobs
+                        if document_id in active_jobs:
+                            del active_jobs[document_id]
+                        
+                        # Call the callback if provided
+                        if callback:
+                            callback(document_id, extraction_results[document_id])
+                        return
+                    else:
+                        # Vector store extraction failed, continue to fallback
+                        logger.warning(f"Vector store extraction failed for document {document_id}, falling back to direct extraction")
+                else:
+                    logger.warning(f"Document {document_id} not ready for vector extraction (status: {document_store[document_id].get('status')}), using fallback")
+            except Exception as e:
+                logger.warning(f"Vector store extraction error for document {document_id}: {str(e)}, using fallback")
+            
+            # Fallback to direct extraction if vector store failed or document is not ready
+            logger.info(f"Using fallback direct extraction for document {document_id}")
+            
+            # Extract data directly from the document
             file_content = document_binary_store[document_id]
             
-            # First, extract the text content from the document
-            # This avoids re-parsing the PDF for each field
-            if use_chunking:
-                # Process chunking once to get text content
-                from utils.document_chunking import split_text_into_chunks
-                text_content, chunking_info = extract_from_binary_data(file_content, None, False, return_text=True)
-                text_content = text_content.get("text", "")
-            else:
-                # Get text content without chunking
-                text_content = extract_from_binary_data(file_content, None, False, return_text=True)
-                text_content = text_content.get("text", "")
+            # Write content to a temporary file
+            import tempfile
+            import os
             
-            # If we don't have a schema with fields, fall back to standard extraction
-            if not schema or "fields" not in schema:
-                # Extract data from the document using the normal method
-                result = extract_from_binary_data(file_content, schema, use_chunking)
+            # Detect if this is a text file by checking the first few bytes
+            is_text_file = False
+            file_extension = ".pdf"
+            try:
+                # Check if content starts with common text file markers
+                sample = file_content[:20].decode('utf-8', errors='ignore')
+                # Common text file markers include letters, numbers, and basic punctuation
+                if all(c.isprintable() or c.isspace() for c in sample):
+                    is_text_file = True
+                    file_extension = ".txt"
+                    logger.info(f"Detected text file for document {document_id} based on content")
+            except Exception:
+                # If we can't decode as text, it's likely binary (PDF or other)
+                pass
                 
-                # Update document status
-                document_store[document_id]["status"] = "completed" if result.get("success", False) else "failed"
-                if not result.get("success", False) and "error" in result:
-                    document_store[document_id]["error"] = result["error"]
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp:
+                tmp.write(file_content)
+                tmp_path = tmp.name
                 
-                # Store the extraction result
-                extraction_results[document_id] = {
-                    "document_id": document_id,
-                    "success": result.get("success", False),
-                    "data": result.get("data", {}),
-                    "error": result.get("error"),
-                    "completed_time": time.time()
-                }
+            # For text files, we should update the extraction approach to handle them correctly
+            if is_text_file:
+                logger.info(f"Processing text file for document {document_id}: {tmp_path}")
+            
+            try:
+                # Extract data directly
+                extract_result = extract_document_data(tmp_path, schema, use_chunking)
                 
-                # Update progress for all fields
-                if result.get("success", False) and "data" in result:
-                    fields = result["data"].keys()
-                    for field in fields:
-                        document_store[document_id]["extraction_status"][field] = "completed"
-            else:
-                # Process each field in a separate thread for parallel extraction
-                field_threads = []
-                
-                # Set up the status for each field
-                for field in schema["fields"]:
-                    field_name = field["name"]
-                    field_description = field.get("description", "")
-                    
-                    # Initialize status for this field
-                    document_store[document_id]["extraction_status"][field_name] = "pending"
-                    field_locks[field_name] = threading.Lock()
-                    
-                    # Create a thread for this field
-                    field_thread = threading.Thread(
-                        target=extract_single_field,
-                        args=(field_name, field_description, text_content)
-                    )
-                    field_thread.daemon = True
-                    field_threads.append(field_thread)
-                
-                # Start all field extraction threads
-                for thread in field_threads:
-                    thread.start()
-                
-                # Wait for all field extractions to complete (with timeout)
-                for thread in field_threads:
-                    thread.join(timeout=300)  # 5-minute timeout per field
-                
-                # Check if all fields are completed or failed
-                all_completed = True
-                for field in schema["fields"]:
-                    field_name = field["name"]
-                    field_status = document_store[document_id]["extraction_status"].get(field_name, "pending")
-                    if field_status not in ["completed", "failed"]:
-                        all_completed = False
-                        break
-                
-                # Update the final document status
-                if all_completed:
+                if extract_result.get("success", False):
+                    # Direct extraction succeeded
                     document_store[document_id]["status"] = "completed"
                     extraction_results[document_id]["success"] = True
+                    extraction_results[document_id]["data"] = extract_result.get("data", {})
                     extraction_results[document_id]["completed_time"] = time.time()
                     
-                    # Final cleanup of any invalid or empty values
-                    final_data = {}
-                    for field_name, field_value in field_results.items():
-                        final_data[field_name] = field_value
+                    # Update extraction status for fields
+                    for field_name in schema.get("fields", []):
+                        name = field_name.get("name", "") if isinstance(field_name, dict) else field_name
+                        document_store[document_id]["extraction_status"][name] = "completed"
                     
-                    extraction_results[document_id]["data"] = final_data
+                    logger.info(f"Document {document_id} extraction completed successfully using direct extraction")
                 else:
+                    # Direct extraction failed
+                    error_msg = extract_result.get("error", "Unknown error during direct extraction")
                     document_store[document_id]["status"] = "failed"
-                    document_store[document_id]["error"] = "Some fields failed to extract within the time limit"
+                    document_store[document_id]["error"] = error_msg
                     extraction_results[document_id]["success"] = False
-                    extraction_results[document_id]["error"] = "Some fields failed to extract within the time limit"
+                    extraction_results[document_id]["error"] = error_msg
                     extraction_results[document_id]["completed_time"] = time.time()
-            
-            logger.info(f"Document {document_id} extraction completed with status: {document_store[document_id]['status']}")
+                    
+                    logger.error(f"Error in direct extraction for document {document_id}: {error_msg}")
+            finally:
+                # Clean up the temporary file
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
             
             # Remove the document from active jobs
             if document_id in active_jobs:
@@ -369,13 +397,13 @@ def async_extract_document(document_id: str, schema: Optional[Dict[str, Any]] = 
     # Start the thread
     thread.start()
     
-    logger.info(f"Started async extraction for document {document_id}")
+    logger.info(f"Started async extraction for document {document_id} using vector store")
     return document_id
 
 
 def cleanup_document(document_id: str) -> bool:
     """
-    Clean up a document from the document store
+    Clean up a document from the document store and vector store
     
     Args:
         document_id: ID of the document
@@ -388,6 +416,15 @@ def cleanup_document(document_id: str) -> bool:
         if document_id not in document_store:
             return False
         
+        # Clean up vector store
+        try:
+            from utils.vector_store import delete_document_from_vector_store
+            vector_result = delete_document_from_vector_store(document_id)
+            if not vector_result.get("success", False):
+                logger.warning(f"Error cleaning up vector store for document {document_id}: {vector_result.get('error')}")
+        except Exception as ve:
+            logger.warning(f"Error cleaning up vector store for document {document_id}: {str(ve)}")
+        
         # Remove the document from the stores
         if document_id in document_store:
             del document_store[document_id]
@@ -397,6 +434,10 @@ def cleanup_document(document_id: str) -> bool:
         
         if document_id in document_binary_store:
             del document_binary_store[document_id]
+        
+        # Remove from active jobs if present
+        if document_id in active_jobs:
+            del active_jobs[document_id]
         
         logger.info(f"Document {document_id} cleaned up successfully")
         return True

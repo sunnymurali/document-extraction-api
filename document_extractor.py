@@ -4,6 +4,7 @@ Document Data Extractor
 A utility that extracts structured data from PDF documents using PyPDF and OpenAI models via LangChain.
 Returns extracted information as structured JSON data. This implementation primarily uses
 Azure OpenAI services but can fall back to standard OpenAI API if Azure is unavailable.
+It now supports using ChromaDB for vector storage and retrieval for more efficient and targeted extraction.
 """
 
 import os
@@ -331,10 +332,10 @@ Return the data as a clean JSON object with no explanations.
 def extract_document_data(file_path: str, schema: Optional[Dict[str, Any]] = None, 
                        use_chunking: bool = True) -> Dict[str, Any]:
     """
-    Extract structured data from a PDF document
+    Extract structured data from a document (PDF or text file)
     
     Args:
-        file_path: Path to the PDF document
+        file_path: Path to the document (PDF or text file)
         schema: Optional schema defining the fields to extract
         use_chunking: Whether to use document chunking for large documents (default: True)
         
@@ -342,11 +343,29 @@ def extract_document_data(file_path: str, schema: Optional[Dict[str, Any]] = Non
         Dictionary with extraction results including either extracted data or error
     """
     try:
-        # Extract text from PDF
-        text = extract_text_from_pdf(file_path)
+        # Check if the file is a text file or PDF
+        is_text_file = file_path.lower().endswith('.txt')
+        
+        if is_text_file:
+            # For text files, read the content directly
+            logger.info(f"Reading text directly from file: {file_path}")
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    text = f.read()
+                logger.info(f"Extracted {len(text)} characters from text file")
+            except Exception as e:
+                error_msg = f"Error reading text file: {str(e)}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+        else:
+            # For PDF files, use the PDF extraction logic
+            text = extract_text_from_pdf(file_path)
         
         if not text or text.isspace():
-            return {"success": False, "error": "Could not extract any text from the PDF document"}
+            if is_text_file:
+                return {"success": False, "error": "The text file is empty"}
+            else:
+                return {"success": False, "error": "Could not extract any text from the PDF document"}
         
         # Check if we should use chunking (based on text length)
         if use_chunking and len(text) > 10000:  # If text is longer than ~10K characters
@@ -401,7 +420,8 @@ def extract_document_data(file_path: str, schema: Optional[Dict[str, Any]] = Non
 
 
 def extract_from_binary_data(file_content: bytes, schema: Optional[Dict[str, Any]] = None,
-                          use_chunking: bool = True, return_text: bool = False) -> Dict[str, Any]:
+                          use_chunking: bool = True, return_text: bool = False,
+                          file_extension: str = ".pdf") -> Dict[str, Any]:
     """
     Extract structured data from binary document content
     
@@ -410,24 +430,62 @@ def extract_from_binary_data(file_content: bytes, schema: Optional[Dict[str, Any
         schema: Optional schema defining the fields to extract
         use_chunking: Whether to use document chunking for large documents (default: True)
         return_text: If True, return the extracted text along with the results
+        file_extension: The file extension to use for the temporary file (default: ".pdf")
         
     Returns:
         Dictionary with extraction results including either extracted data or error
     """
     try:
+        # Detect if this is a text file by checking the first few bytes
+        is_text_file = False
+        try:
+            # Check if content starts with common text file markers
+            sample = file_content[:20].decode('utf-8', errors='ignore')
+            # Common text file markers include letters, numbers, and basic punctuation
+            if all(c.isprintable() or c.isspace() for c in sample):
+                is_text_file = True
+                file_extension = ".txt"
+                logger.info("Detected text file based on content")
+        except Exception:
+            # If we can't decode as text, it's likely binary (PDF or other)
+            pass
+        
         # Save the binary content to a temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp:
             tmp.write(file_content)
             tmp_path = tmp.name
         
         try:
-            # If return_text is True, just extract the text and return it
-            if return_text:
-                text = extract_text_from_pdf(tmp_path)
-                return {"success": True, "text": text}
+            # If it's a text file, extract the text directly
+            if is_text_file or file_extension.lower() == ".txt":
+                with open(tmp_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    text = f.read()
+                logger.info(f"Extracted {len(text)} characters from text file")
                 
-            # Extract data from the temporary file, passing the chunking parameter
-            result = extract_document_data(tmp_path, schema, use_chunking=use_chunking)
+                # For text files, we can proceed directly to extraction from the text
+                if return_text:
+                    return {"success": True, "text": text}
+                
+                # Extract structured data directly from the text
+                try:
+                    data = extract_structured_data(text, schema)
+                    return {
+                        "success": True,
+                        "data": data,
+                        "extraction_method": "text_direct"
+                    }
+                except Exception as e:
+                    logger.error(f"Error extracting structured data from text: {str(e)}")
+                    return {"success": False, "error": str(e)}
+            else:
+                # For PDF files, use the PDF extraction logic
+                # If return_text is True, just extract the text and return it
+                if return_text:
+                    text = extract_text_from_pdf(tmp_path)
+                    return {"success": True, "text": text}
+                
+                # Extract data from the temporary file, passing the chunking parameter
+                result = extract_document_data(tmp_path, schema, use_chunking=use_chunking)
             
             return result
         finally:
@@ -645,3 +703,42 @@ if __name__ == "__main__":
     
     # Print the result
     print(json.dumps(result, indent=2))
+
+
+def extract_using_vector_store(document_id: str, fields: List[Dict[str, str]]) -> Dict[str, Any]:
+    """
+    Extract structured data from a document stored in the vector database
+    
+    This method leverages ChromaDB to perform semantic search on the document
+    and extract specific fields by finding the most relevant text chunks.
+    
+    Args:
+        document_id: ID of the document in the vector store
+        fields: List of fields to extract from the document
+        
+    Returns:
+        Dictionary with extraction results
+    """
+    try:
+        # Import vector store utilities here to avoid circular imports
+        from utils.vector_store import extract_data_from_vector_store
+        
+        # Query the vector store for the specified fields
+        result = extract_data_from_vector_store(document_id, fields)
+        
+        if not result.get("success", False):
+            raise Exception(result.get("error", "Unknown error retrieving data from vector store"))
+        
+        return {
+            "success": True,
+            "data": result.get("data", {}),
+            "field_progress": result.get("field_progress", {})
+        }
+        
+    except Exception as e:
+        error_msg = f"Error extracting data using vector store: {str(e)}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "error": error_msg
+        }
