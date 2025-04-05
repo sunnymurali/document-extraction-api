@@ -165,7 +165,68 @@ def async_extract_document(document_id: str, schema: Optional[Dict[str, Any]] = 
         callback: Optional callback function to call when extraction is complete
     """
     # Import here to avoid circular imports
-    from document_extractor import extract_from_binary_data
+    from document_extractor import extract_from_binary_data, extract_structured_data
+    
+    # Field-specific extraction locks to prevent race conditions
+    field_locks = {}
+    
+    # Create a dictionary to store individual field extraction results
+    field_results = {}
+    
+    # Set up field extraction status tracking
+    if document_id not in extraction_results:
+        extraction_results[document_id] = {
+            "document_id": document_id,
+            "success": False,
+            "data": {},
+            "error": None,
+            "completed_time": None
+        }
+    
+    def extract_single_field(field_name, field_description, text_content):
+        """Extract a single field from the document text"""
+        try:
+            logger.info(f"Starting extraction for field: {field_name}")
+            
+            # Update field status to processing
+            with field_locks.get(field_name, threading.Lock()):
+                document_store[document_id]["extraction_status"][field_name] = "processing"
+            
+            # Create a schema for just this one field
+            field_schema = {
+                "fields": [
+                    {"name": field_name, "description": field_description}
+                ]
+            }
+            
+            # Extract just this one field
+            field_result = extract_structured_data(text_content, field_schema)
+            
+            # Store the result for this field
+            with field_locks.get(field_name, threading.Lock()):
+                # Update the main extraction results for this field
+                if field_name in field_result:
+                    extraction_results[document_id]["data"][field_name] = field_result[field_name]
+                    field_results[field_name] = field_result[field_name]
+                else:
+                    # Handle case where field wasn't found but no error occurred
+                    extraction_results[document_id]["data"][field_name] = None
+                    field_results[field_name] = None
+                
+                # Mark this field as completed
+                document_store[document_id]["extraction_status"][field_name] = "completed"
+            
+            logger.info(f"Completed extraction for field: {field_name}")
+            
+        except Exception as e:
+            logger.error(f"Error extracting field {field_name}: {str(e)}")
+            
+            with field_locks.get(field_name, threading.Lock()):
+                # Mark this field as failed
+                document_store[document_id]["extraction_status"][field_name] = "failed"
+                # Still store null for this field since it failed
+                extraction_results[document_id]["data"][field_name] = None
+                field_results[field_name] = None
     
     def extraction_worker():
         try:
@@ -175,28 +236,98 @@ def async_extract_document(document_id: str, schema: Optional[Dict[str, Any]] = 
             # Get the binary content
             file_content = document_binary_store[document_id]
             
-            # Extract data from the document
-            result = extract_from_binary_data(file_content, schema, use_chunking)
+            # First, extract the text content from the document
+            # This avoids re-parsing the PDF for each field
+            if use_chunking:
+                # Process chunking once to get text content
+                from utils.document_chunking import split_text_into_chunks
+                text_content, chunking_info = extract_from_binary_data(file_content, None, False, return_text=True)
+                text_content = text_content.get("text", "")
+            else:
+                # Get text content without chunking
+                text_content = extract_from_binary_data(file_content, None, False, return_text=True)
+                text_content = text_content.get("text", "")
             
-            # Update document status
-            document_store[document_id]["status"] = "completed" if result.get("success", False) else "failed"
-            if not result.get("success", False) and "error" in result:
-                document_store[document_id]["error"] = result["error"]
-            
-            # Store the extraction result
-            extraction_results[document_id] = {
-                "document_id": document_id,
-                "success": result.get("success", False),
-                "data": result.get("data"),
-                "error": result.get("error"),
-                "completed_time": time.time()
-            }
-            
-            # Update progress for all fields
-            if result.get("success", False) and "data" in result:
-                fields = result["data"].keys()
-                for field in fields:
-                    document_store[document_id]["extraction_status"][field] = "completed"
+            # If we don't have a schema with fields, fall back to standard extraction
+            if not schema or "fields" not in schema:
+                # Extract data from the document using the normal method
+                result = extract_from_binary_data(file_content, schema, use_chunking)
+                
+                # Update document status
+                document_store[document_id]["status"] = "completed" if result.get("success", False) else "failed"
+                if not result.get("success", False) and "error" in result:
+                    document_store[document_id]["error"] = result["error"]
+                
+                # Store the extraction result
+                extraction_results[document_id] = {
+                    "document_id": document_id,
+                    "success": result.get("success", False),
+                    "data": result.get("data", {}),
+                    "error": result.get("error"),
+                    "completed_time": time.time()
+                }
+                
+                # Update progress for all fields
+                if result.get("success", False) and "data" in result:
+                    fields = result["data"].keys()
+                    for field in fields:
+                        document_store[document_id]["extraction_status"][field] = "completed"
+            else:
+                # Process each field in a separate thread for parallel extraction
+                field_threads = []
+                
+                # Set up the status for each field
+                for field in schema["fields"]:
+                    field_name = field["name"]
+                    field_description = field.get("description", "")
+                    
+                    # Initialize status for this field
+                    document_store[document_id]["extraction_status"][field_name] = "pending"
+                    field_locks[field_name] = threading.Lock()
+                    
+                    # Create a thread for this field
+                    field_thread = threading.Thread(
+                        target=extract_single_field,
+                        args=(field_name, field_description, text_content)
+                    )
+                    field_thread.daemon = True
+                    field_threads.append(field_thread)
+                
+                # Start all field extraction threads
+                for thread in field_threads:
+                    thread.start()
+                
+                # Wait for all field extractions to complete (with timeout)
+                for thread in field_threads:
+                    thread.join(timeout=300)  # 5-minute timeout per field
+                
+                # Check if all fields are completed or failed
+                all_completed = True
+                for field in schema["fields"]:
+                    field_name = field["name"]
+                    field_status = document_store[document_id]["extraction_status"].get(field_name, "pending")
+                    if field_status not in ["completed", "failed"]:
+                        all_completed = False
+                        break
+                
+                # Update the final document status
+                if all_completed:
+                    document_store[document_id]["status"] = "completed"
+                    extraction_results[document_id]["success"] = True
+                    extraction_results[document_id]["completed_time"] = time.time()
+                    
+                    # Final cleanup of any invalid or empty values
+                    final_data = {}
+                    for field_name, field_value in field_results.items():
+                        final_data[field_name] = field_value
+                    
+                    extraction_results[document_id]["data"] = final_data
+                else:
+                    document_store[document_id]["status"] = "failed"
+                    document_store[document_id]["error"] = "Some fields failed to extract within the time limit"
+                    extraction_results[document_id]["success"] = False
+                    extraction_results[document_id]["error"] = "Some fields failed to extract within the time limit"
+                    extraction_results[document_id]["completed_time"] = time.time()
             
             logger.info(f"Document {document_id} extraction completed with status: {document_store[document_id]['status']}")
             
@@ -206,7 +337,7 @@ def async_extract_document(document_id: str, schema: Optional[Dict[str, Any]] = 
             
             # Call the callback if provided
             if callback:
-                callback(document_id, result)
+                callback(document_id, extraction_results[document_id])
                 
         except Exception as e:
             # Update document status to failed
@@ -214,6 +345,11 @@ def async_extract_document(document_id: str, schema: Optional[Dict[str, Any]] = 
             document_store[document_id]["error"] = str(e)
             
             logger.error(f"Error extracting data from document {document_id}: {e}")
+            
+            # Update the extraction results
+            extraction_results[document_id]["success"] = False
+            extraction_results[document_id]["error"] = str(e)
+            extraction_results[document_id]["completed_time"] = time.time()
             
             # Remove the document from active jobs
             if document_id in active_jobs:

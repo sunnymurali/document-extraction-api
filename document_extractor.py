@@ -401,7 +401,7 @@ def extract_document_data(file_path: str, schema: Optional[Dict[str, Any]] = Non
 
 
 def extract_from_binary_data(file_content: bytes, schema: Optional[Dict[str, Any]] = None,
-                          use_chunking: bool = True) -> Dict[str, Any]:
+                          use_chunking: bool = True, return_text: bool = False) -> Dict[str, Any]:
     """
     Extract structured data from binary document content
     
@@ -409,6 +409,7 @@ def extract_from_binary_data(file_content: bytes, schema: Optional[Dict[str, Any
         file_content: Binary content of the document
         schema: Optional schema defining the fields to extract
         use_chunking: Whether to use document chunking for large documents (default: True)
+        return_text: If True, return the extracted text along with the results
         
     Returns:
         Dictionary with extraction results including either extracted data or error
@@ -420,6 +421,11 @@ def extract_from_binary_data(file_content: bytes, schema: Optional[Dict[str, Any
             tmp_path = tmp.name
         
         try:
+            # If return_text is True, just extract the text and return it
+            if return_text:
+                text = extract_text_from_pdf(tmp_path)
+                return {"success": True, "text": text}
+                
             # Extract data from the temporary file, passing the chunking parameter
             result = extract_document_data(tmp_path, schema, use_chunking=use_chunking)
             
