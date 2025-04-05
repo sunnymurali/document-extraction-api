@@ -17,6 +17,11 @@ import pypdf
 
 from langchain_core.messages import SystemMessage, HumanMessage
 from utils.azure_openai_config import get_azure_chat_openai
+from utils.document_chunking import (
+    split_text_into_chunks,
+    merge_extraction_results,
+    process_chunks_with_progress
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -139,13 +144,15 @@ Return the data as a clean JSON object.
         raise Exception(error_msg)
 
 
-def extract_document_data(file_path: str, schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def extract_document_data(file_path: str, schema: Optional[Dict[str, Any]] = None, 
+                       use_chunking: bool = True) -> Dict[str, Any]:
     """
     Extract structured data from a PDF document
     
     Args:
         file_path: Path to the PDF document
         schema: Optional schema defining the fields to extract
+        use_chunking: Whether to use document chunking for large documents (default: True)
         
     Returns:
         Dictionary with extraction results including either extracted data or error
@@ -157,23 +164,56 @@ def extract_document_data(file_path: str, schema: Optional[Dict[str, Any]] = Non
         if not text or text.isspace():
             return {"success": False, "error": "Could not extract any text from the PDF document"}
         
-        # Extract structured data from text
-        data = extract_structured_data(text, schema)
-        
-        return {"success": True, "data": data}
+        # Check if we should use chunking (based on text length)
+        if use_chunking and len(text) > 10000:  # If text is longer than ~10K characters
+            logger.info(f"Document is large ({len(text)} characters), using chunking strategy")
+            
+            # Split the text into chunks
+            chunks = split_text_into_chunks(text)
+            logger.info(f"Split document into {len(chunks)} chunks")
+            
+            # Define a function to extract data from a single chunk
+            def extract_from_chunk(chunk_text, schema):
+                return extract_structured_data(chunk_text, schema)
+            
+            # Process all chunks and merge results
+            merged_data, progress_info = process_chunks_with_progress(chunks, extract_from_chunk, schema)
+            
+            return {
+                "success": True, 
+                "data": merged_data,
+                "chunking_info": {
+                    "used": True,
+                    "chunks_processed": len(progress_info),
+                    "total_chunks": len(chunks),
+                    "progress": progress_info
+                }
+            }
+        else:
+            # For smaller documents, process as a single chunk
+            logger.info("Processing document as a single chunk")
+            data = extract_structured_data(text, schema)
+            
+            return {
+                "success": True, 
+                "data": data,
+                "chunking_info": {"used": False}
+            }
     
     except Exception as e:
         logger.error(f"Error extracting data from document: {str(e)}")
         return {"success": False, "error": str(e)}
 
 
-def extract_from_binary_data(file_content: bytes, schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def extract_from_binary_data(file_content: bytes, schema: Optional[Dict[str, Any]] = None,
+                          use_chunking: bool = True) -> Dict[str, Any]:
     """
     Extract structured data from binary document content
     
     Args:
         file_content: Binary content of the document
         schema: Optional schema defining the fields to extract
+        use_chunking: Whether to use document chunking for large documents (default: True)
         
     Returns:
         Dictionary with extraction results including either extracted data or error
@@ -185,8 +225,8 @@ def extract_from_binary_data(file_content: bytes, schema: Optional[Dict[str, Any
             tmp_path = tmp.name
         
         try:
-            # Extract data from the temporary file
-            result = extract_document_data(tmp_path, schema)
+            # Extract data from the temporary file, passing the chunking parameter
+            result = extract_document_data(tmp_path, schema, use_chunking=use_chunking)
             
             return result
         finally:
