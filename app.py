@@ -40,6 +40,29 @@ def index():
 def serve_static(path):
     """Serve static files"""
     return send_from_directory('static', path)
+    
+@app.route('/api/test-openai-connection')
+def test_openai_connection():
+    """Test OpenAI connection to validate Azure prioritization with fallback"""
+    from utils.azure_openai_config import get_chat_openai
+    try:
+        # This will try Azure OpenAI first, then fall back to standard OpenAI if needed
+        client = get_chat_openai()
+        
+        # Return connection details (without exposing sensitive info)
+        from langchain_openai import AzureChatOpenAI
+        provider = "Azure OpenAI" if isinstance(client, AzureChatOpenAI) else "Standard OpenAI"
+        
+        return jsonify({
+            "success": True,
+            "provider": provider,
+            "message": f"Successfully connected to {provider}"
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        })
 
 def process_document_in_background(document_id, file_path, file_name):
     """Process document in background thread"""

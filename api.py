@@ -56,6 +56,10 @@ extraction_results = {}
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 AZURE_OPENAI_API_KEY = os.environ.get("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_DEPLOYMENT_NAME = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
+# the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
+# do not change this unless explicitly requested by the user
+OPENAI_MODEL = "gpt-4o"
 
 # Define models
 class DocumentUploadResponse(BaseModel):
@@ -109,16 +113,49 @@ app.add_middleware(
 def get_embeddings():
     """Get embeddings model with proper fallback"""
     try:
-        # Try to use Azure OpenAI if configured
+        # First try Azure OpenAI embeddings
         if AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT:
-            return AzureOpenAIEmbeddings(
-                azure_deployment=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "text-embedding-ada-002"),
-                openai_api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2023-05-15"),
-                azure_endpoint=AZURE_OPENAI_ENDPOINT,
-                api_key=AZURE_OPENAI_API_KEY,
+            try:
+                # Get deployment name specifically for embeddings or fallback to general deployment name
+                embeddings_deployment = os.environ.get("AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT") or os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "text-embedding-ada-002")
+                
+                logger.info(f"Initializing Azure OpenAI embeddings with deployment: {embeddings_deployment}")
+                
+                azure_embeddings = AzureOpenAIEmbeddings(
+                    azure_deployment=embeddings_deployment,
+                    openai_api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2023-05-15"),
+                    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+                    api_key=AZURE_OPENAI_API_KEY,
+                )
+                
+                # Test the embeddings
+                logger.info("Testing Azure OpenAI embeddings connection")
+                _ = azure_embeddings.embed_query("test")
+                logger.info("Successfully initialized Azure OpenAI embeddings")
+                return azure_embeddings
+            except Exception as e:
+                logger.error(f"Error initializing Azure OpenAI embeddings, will fall back to standard OpenAI: {str(e)}")
+        else:
+            logger.warning("Azure OpenAI credentials not fully configured, will try standard OpenAI")
+        
+        # Fallback to standard OpenAI embeddings
+        if OPENAI_API_KEY:
+            logger.info("Falling back to standard OpenAI embeddings")
+            model = "text-embedding-3-small"  # Latest embeddings model
+            standard_embeddings = OpenAIEmbeddings(
+                model=model,
+                api_key=OPENAI_API_KEY
             )
-        # Fall back to standard OpenAI
-        return OpenAIEmbeddings(api_key=OPENAI_API_KEY)
+            # Test the embeddings
+            logger.info("Testing standard OpenAI embeddings connection")
+            _ = standard_embeddings.embed_query("test")
+            logger.info("Successfully initialized standard OpenAI embeddings")
+            return standard_embeddings
+        else:
+            logger.error("No OPENAI_API_KEY set for fallback")
+            
+        # If we get here, we couldn't initialize any embeddings service
+        raise Exception("Failed to initialize either Azure OpenAI or standard OpenAI embeddings")
     except Exception as e:
         logger.error(f"Error initializing embeddings: {str(e)}")
         raise
@@ -143,19 +180,61 @@ def get_vector_store(collection_name):
 def get_llm():
     """Get language model with proper fallback"""
     try:
-        # Try to use Azure OpenAI if configured
-        if AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT:
-            return AzureChatOpenAI(
-                azure_deployment=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
-                openai_api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2023-05-15"),
-                azure_endpoint=AZURE_OPENAI_ENDPOINT,
-                api_key=AZURE_OPENAI_API_KEY,
-                temperature=0,
-            )
+        # Try Azure OpenAI first
+        if AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT_NAME:
+            try:
+                logger.info(f"Initializing Azure OpenAI LLM with deployment: {AZURE_OPENAI_DEPLOYMENT_NAME}")
+                
+                azure_client = AzureChatOpenAI(
+                    azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,
+                    openai_api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2023-05-15"),
+                    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+                    api_key=AZURE_OPENAI_API_KEY,
+                    temperature=0,
+                )
+                
+                # Test the Azure OpenAI client
+                logger.info("Testing Azure OpenAI LLM connection")
+                test_message = SystemMessage(content="You are a helpful assistant.")
+                test_result = azure_client.invoke([test_message, HumanMessage(content="Hello")])
+                if test_result:
+                    logger.info("Successfully tested Azure OpenAI LLM")
+                    return azure_client
+            except Exception as e:
+                logger.error(f"Failed to configure or test Azure OpenAI LLM: {str(e)}")
+                logger.info("Will try standard OpenAI as fallback")
+        else:
+            logger.warning("Azure OpenAI credentials not fully configured")
+            missing = []
+            if not AZURE_OPENAI_API_KEY:
+                missing.append("AZURE_OPENAI_API_KEY")
+            if not AZURE_OPENAI_ENDPOINT:
+                missing.append("AZURE_OPENAI_ENDPOINT")
+            if not AZURE_OPENAI_DEPLOYMENT_NAME:
+                missing.append("AZURE_OPENAI_DEPLOYMENT_NAME")
+            logger.info(f"Missing Azure OpenAI credentials: {', '.join(missing)}")
+            logger.info("Will try standard OpenAI as fallback")
+        
         # Fall back to standard OpenAI
-        # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
-        # do not change this unless explicitly requested by the user
-        return ChatOpenAI(model="gpt-4o", api_key=OPENAI_API_KEY, temperature=0)
+        if OPENAI_API_KEY:
+            try:
+                # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
+                # do not change this unless explicitly requested by the user
+                logger.info(f"Falling back to standard OpenAI with model: {OPENAI_MODEL}")
+                openai_client = ChatOpenAI(
+                    model=OPENAI_MODEL,
+                    api_key=OPENAI_API_KEY,
+                    temperature=0,
+                )
+                logger.info("Successfully created standard OpenAI client")
+                return openai_client
+            except Exception as e:
+                logger.error(f"Failed to configure standard OpenAI LLM: {str(e)}")
+        else:
+            logger.error("No OPENAI_API_KEY set for fallback")
+        
+        # If we get here, we couldn't initialize any LLM
+        raise Exception("Failed to configure either Azure OpenAI or standard OpenAI LLM")
     except Exception as e:
         logger.error(f"Error initializing language model: {str(e)}")
         raise
