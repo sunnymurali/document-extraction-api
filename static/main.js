@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // General extraction elements
     const uploadForm = document.getElementById('upload-form');
     const fileInput = document.getElementById('document-file');
+    const useChunkingCheckbox = document.getElementById('use-chunking');
     const extractBtn = document.getElementById('extract-btn');
     const loadingSpinner = document.getElementById('loading-spinner');
     const loadingOverlay = document.getElementById('loading-overlay');
@@ -61,6 +62,9 @@ document.addEventListener('DOMContentLoaded', function() {
         // Prepare form data for upload
         const formData = new FormData();
         formData.append('file', fileInput.files[0]);
+        
+        // Add chunking option
+        formData.append('use_chunking', useChunkingCheckbox.checked ? 'true' : 'false');
         
         if (schemaInput.value.trim()) {
             formData.append('extraction_schema', schemaInput.value);
@@ -134,8 +138,28 @@ document.addEventListener('DOMContentLoaded', function() {
         resultsContainer.innerHTML = '';
         
         if (data.success && data.data) {
+            // Show chunking information if available
+            let chunkingInfo = '';
+            if (data.chunking_info) {
+                if (data.chunking_info.used) {
+                    chunkingInfo = `
+                        <div class="alert alert-info mb-3">
+                            <h5>Document Processing Information</h5>
+                            <p>Document was processed using chunking: ${data.chunking_info.chunks_processed} of ${data.chunking_info.total_chunks} chunks processed.</p>
+                        </div>
+                    `;
+                } else {
+                    chunkingInfo = `
+                        <div class="alert alert-info mb-3">
+                            <p>Document was processed as a single chunk (chunking disabled or not needed).</p>
+                        </div>
+                    `;
+                }
+            }
+            
             // Create results display
             const resultHtml = `
+                ${chunkingInfo}
                 <div class="results-content">
                     <pre class="json-display">${syntaxHighlight(JSON.stringify(data.data, null, 2))}</pre>
                 </div>

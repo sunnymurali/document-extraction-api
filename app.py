@@ -56,6 +56,7 @@ def extract_data():
     Request: multipart/form-data with:
     - file: The document file
     - extraction_schema: (optional) JSON string defining extraction schema
+    - use_chunking: (optional) Boolean to enable/disable chunking for large documents (default: true)
     
     Response: JSON with extraction results
     """
@@ -81,6 +82,15 @@ def extract_data():
                 schema = json.loads(request.form['extraction_schema'])
             except json.JSONDecodeError as e:
                 return jsonify({'success': False, 'error': f'Invalid schema format: {str(e)}'}), 400
+        
+        # Check if chunking should be used (default to True for large documents)
+        use_chunking = True
+        if 'use_chunking' in request.form:
+            use_chunking_param = request.form['use_chunking'].lower()
+            use_chunking = use_chunking_param not in ('false', '0', 'no', 'off')
+        
+        # Log the chunking setting
+        logger.info(f"Document processing with chunking: {'enabled' if use_chunking else 'disabled'}")
         
         # Save the file
         filename = secure_filename(file.filename)
@@ -114,7 +124,8 @@ def extract_data():
                         # Keep the default text preview if extraction fails
             else:
                 # Process the uploaded file with our extractor
-                result = extract_document_data(file_path, schema)
+                # Pass the chunking parameter to control chunking behavior
+                result = extract_document_data(file_path, schema, use_chunking=use_chunking)
             
             return jsonify(result)
         
