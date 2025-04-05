@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 def extract_text_from_pdf(file_path: str) -> str:
     """
-    Extract text content from a PDF file
+    Extract text content from a PDF file with optimizations for financial documents
     
     Args:
         file_path: Path to the PDF file
@@ -42,13 +42,52 @@ def extract_text_from_pdf(file_path: str) -> str:
     try:
         logger.info(f"Extracting text from PDF: {file_path}")
         reader = pypdf.PdfReader(file_path)
+        
+        # Get total number of pages
+        num_pages = len(reader.pages)
+        logger.info(f"PDF document has {num_pages} pages")
+        
+        # For financial documents, focus on the most important pages (limit to 100 pages)
+        # Many financial metrics are found in the first 30% of an annual report, then in tables mid-document
+        max_pages = min(num_pages, 100)
         text = ""
         
-        for page in reader.pages:
-            page_text = page.extract_text() or ""
-            text += page_text + "\n\n"
+        # First extract from early pages (likely to contain management discussion, financial highlights)
+        early_pages = min(int(max_pages * 0.3), 30)  # Up to 30% of document or 30 pages
+        logger.info(f"Extracting first {early_pages} pages for executive summary and key metrics")
+        
+        for i in range(early_pages):
+            if i < num_pages:
+                page_text = reader.pages[i].extract_text() or ""
+                text += page_text + "\n\n"
+        
+        # Then extract from middle pages (likely to contain financial statements and tables)
+        if num_pages > early_pages:
+            middle_start = early_pages
+            middle_end = min(num_pages, 70)  # Financial statements usually before page 70
+            logger.info(f"Extracting middle pages {middle_start} to {middle_end} for financial statements")
             
-        return text.strip()
+            for i in range(middle_start, middle_end):
+                if i < num_pages:
+                    page_text = reader.pages[i].extract_text() or ""
+                    text += page_text + "\n\n"
+        
+        # If text extraction failed or text is too short, try fallback method
+        if len(text.strip()) < 1000 and num_pages > 5:
+            logger.warning(f"Primary extraction yielded insufficient text ({len(text)} chars), using alternative method")
+            
+            # Fallback to sequential extraction of all pages
+            text = ""
+            for i in range(min(num_pages, 100)):  # Limit to 100 pages
+                page_text = reader.pages[i].extract_text() or ""
+                text += page_text + "\n\n"
+        
+        # Process the text to clean up common PDF extraction issues in financial documents
+        processed_text = text.replace("$", "$ ")  # Add space after dollar signs for better recognition
+        processed_text = processed_text.replace("  ", " ")  # Remove double spaces
+        
+        logger.info(f"Extracted {len(processed_text)} characters of text from PDF")
+        return processed_text.strip()
     except Exception as e:
         error_msg = f"Error extracting text from PDF: {str(e)}"
         logger.error(error_msg)
@@ -73,14 +112,20 @@ def extract_structured_data(text: str, schema: Optional[Dict[str, Any]] = None) 
     
     # Prepare system message for the extraction
     system_prompt = (
-        "You are a financial document data extraction assistant that extracts structured information from text. "
+        "You are a financial document data extraction assistant specialized in extracting information from annual reports and 10-K filings. "
         "Extract the information as a valid JSON object based on the provided schema or general document data. "
-        "Be thorough in your search for financial information in the document. "
-        "Financial information is often found in tables, statements, or sections dedicated to financial results. "
-        "Look for actual numeric values, paying special attention to dollar amounts. "
-        "If a field cannot be found after thorough search, use null as the value. Do not make up information. "
+        "Be methodical and thorough in your search for financial information in the document. "
+        "Financial information is typically found in: "
+        "1. Management's Discussion and Analysis (MD&A) section "
+        "2. Financial Statements (Consolidated Balance Sheets, Income Statements, etc.) "
+        "3. Notes to the Financial Statements "
+        "4. Business Segment reporting sections "
+        "Look for actual numeric values in tables and financial statements, paying special attention to dollar amounts in millions or billions. "
+        "For financial metrics, be sure to extract the most recent annual or full-year values, not quarterly. "
+        "If a field cannot be found in its typical form, look for equivalent metrics or alternative names. "
+        "If after thorough search you cannot find the information, use null as the value. Never make up or estimate values. "
         "Be concise and direct in your extraction. For fields like 'Business Segment Financial Performance', "
-        "extract a summary of performance across different business segments."
+        "extract a summary of performance across the company's main business segments or divisions."
     )
     
     # Add schema information to the prompt if provided
@@ -91,13 +136,13 @@ def extract_structured_data(text: str, schema: Optional[Dict[str, Any]] = None) 
             field_name = field['name']
             field_desc = field.get('description', '')
             
-            # Add specific guidance for each field type
+            # Add specific guidance for each field type with alternative names/formats
             if field_name == "Net Interest Income":
-                field_desc = "This is a key financial metric found in the income statement or financial results section. Look for mentions of 'Net Interest Income' or 'NII', typically reported in millions or billions of dollars. Extract the most recent annual value."
+                field_desc = "This is a key financial metric found in the income statement or financial results section. Look for mentions of 'Net Interest Income', 'NII', 'Interest Income - Interest Expense', or equivalent metrics. For banks and financial institutions, this is a critical metric typically reported in millions or billions of dollars. For Morgan Stanley, look in the Consolidated Income Statement or 'Consolidated Results of Operations'. Extract the most recent annual value."
             elif field_name == "Total operating expense":
-                field_desc = "This is a financial metric found in the income statement, often listed as 'Operating Expenses', 'Total Operating Expenses', or 'Operating Costs'. Look for the sum of all expenses related to operations. Extract the most recent annual value."
+                field_desc = "This is a financial metric found in the income statement, often listed as 'Operating Expenses', 'Total Operating Expenses', 'Non-interest expenses', 'Total non-interest expenses', or 'Operating Costs'. For Morgan Stanley, check the 'Consolidated Results of Operations' or 'Expense Management' section. Look for the sum of all expenses related to operations. Extract the most recent annual value."
             elif field_name == "Business Segment Financial Performance":
-                field_desc = "Look for a section that breaks down the performance by different business segments or divisions. Extract a summary of each segment's performance with their names and key metrics (revenue, income, etc.). This is often found in a segment reporting section."
+                field_desc = "Look for a section that breaks down the performance by different business segments or divisions. For Morgan Stanley, look for 'Business Segments' or 'Segment Information' sections. Key segments likely include Institutional Securities, Wealth Management, and Investment Management. Extract a summary of each segment's performance with their names and key metrics (revenue, income, assets, etc.). This is often found in a segment reporting section or in the Management's Discussion and Analysis."
             
             field_descriptions.append(f"- {field_name}: {field_desc}")
             

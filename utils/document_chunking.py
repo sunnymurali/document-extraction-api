@@ -14,9 +14,9 @@ logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(le
 logger = logging.getLogger(__name__)
 
 # Constants for chunking - balance between coverage and performance
-DEFAULT_CHUNK_SIZE = 4000   # Larger chunks to capture more context
-DEFAULT_CHUNK_OVERLAP = 200  # More overlap to reduce missing information at chunk boundaries
-MAX_CHUNKS_TO_PROCESS = 5   # Process more chunks to handle larger documents and find more data
+DEFAULT_CHUNK_SIZE = 5000   # Larger chunks to capture more financial context
+DEFAULT_CHUNK_OVERLAP = 300  # Increased overlap to capture complete financial tables between chunks
+MAX_CHUNKS_TO_PROCESS = 6   # Process more chunks to handle larger financial documents
 
 def split_text_into_chunks(text: str, chunk_size: int = DEFAULT_CHUNK_SIZE, 
                           chunk_overlap: int = DEFAULT_CHUNK_OVERLAP) -> List[str]:
