@@ -1,922 +1,502 @@
 /**
- * Document Data Extractor
- * Frontend JavaScript for handling document uploads and displaying results
- * Enhanced with asynchronous processing to handle large documents without blocking
+ * Document Data Extraction Frontend
  */
-document.addEventListener('DOMContentLoaded', function() {
-    // DOM Elements - General Extraction
+
+document.addEventListener('DOMContentLoaded', () => {
+    // UI Elements
     const uploadForm = document.getElementById('upload-form');
-    const fileInput = document.getElementById('document-file');
-    const schemaInput = document.getElementById('extraction-schema');
-    const jsonSchemaContainer = document.getElementById('json-schema-container');
-    const fieldsBuilder = document.getElementById('fields-builder');
+    const fileInput = document.getElementById('file-input');
+    const documentStatus = document.getElementById('document-status');
     const fieldsContainer = document.getElementById('fields-container');
+    const fieldsList = document.getElementById('fields-list');
     const noFieldsMessage = document.getElementById('no-fields-message');
     const addFieldBtn = document.getElementById('add-field-btn');
-    const toggleJsonViewBtn = document.getElementById('toggle-json-view');
-    const useChunkingCheckbox = document.getElementById('use-chunking');
-    const extractBtn = document.getElementById('extract-btn');
-    const loadingSpinner = document.getElementById('loading-spinner');
-    const loadingOverlay = document.getElementById('loading-overlay');
-    const progressContainer = document.getElementById('progress-container');
-    const progressBar = document.getElementById('extraction-progress');
-    const progressText = document.getElementById('progress-text');
+    const extractButton = document.getElementById('extract-button');
+    const extractionStatus = document.getElementById('extraction-status');
+    const fieldStatusContainer = document.getElementById('field-status-container');
     const resultsContainer = document.getElementById('results-container');
-    const copyJsonBtn = document.getElementById('copy-json-btn');
-    
-    // DOM Elements - Table Extraction
-    const tablesForm = document.getElementById('tables-form');
-    const tablesFile = document.getElementById('tables-file');
-    const extractTablesBtn = document.getElementById('extract-tables-btn');
-    const tablesLoadingSpinner = document.getElementById('tables-loading-spinner');
-    const tableSelector = document.getElementById('table-selector');
-    const tablesResultsContainer = document.getElementById('tables-results-container');
-    const copyTablesJsonBtn = document.getElementById('copy-tables-json-btn');
-    
-    // Log all DOM elements for debugging
-    console.log('DOM Elements:', {
-        uploadForm, fileInput, schemaInput, jsonSchemaContainer,
-        fieldsBuilder, fieldsContainer, noFieldsMessage, addFieldBtn,
-        toggleJsonViewBtn, useChunkingCheckbox, extractBtn, loadingSpinner,
-        loadingOverlay, progressContainer, progressBar, progressText,
-        resultsContainer, copyJsonBtn
-    });
-    
-    // State variables
-    let statusInterval = null;
-    let activeDocumentId = null;
-    let extractedData = null;
-    let extractedTables = null;
-    
-    // Form submission handler for general extraction
-    uploadForm.addEventListener('submit', function(e) {
-        e.preventDefault();
-        console.log("Form submitted");
+    const jsonOutput = document.getElementById('json-output');
+    const clearResultsBtn = document.getElementById('clear-results');
+    const errorContainer = document.getElementById('error-container');
+    const loadingIndicator = document.getElementById('loading-indicator');
+
+    // Current document and extraction state
+    let currentDocumentId = null;
+    let currentTaskId = null;
+    let extractionTimer = null;
+    let documentStatusTimer = null;
+
+    // Hide error container initially
+    errorContainer.style.display = 'none';
+
+    /**
+     * Upload a document
+     */
+    uploadForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
         
-        // Validate file input
-        if (!fileInput.files || fileInput.files.length === 0) {
-            showAlert('warning', 'Please select a document to upload.');
+        const file = fileInput.files[0];
+        if (!file) {
+            showError('Please select a file to upload');
             return;
         }
-        
-        // Reset previous results
-        resetResults();
-        
-        // Start loading state
-        startLoading();
-        
-        // Show progress container
-        showProgress();
-        resetProgress();
-        
-        // STEP 1: Upload the document
-        uploadDocument()
-            .then(uploadResult => {
-                console.log("Document uploaded successfully", uploadResult);
-                
-                if (!uploadResult.success) {
-                    throw new Error(uploadResult.error || 'Document upload failed');
-                }
-                
-                // Store the active document ID
-                activeDocumentId = uploadResult.document_id;
-                
-                // Update progress
-                updateProgress('Document uploaded', 20);
-                
-                // STEP 2: Start extraction with the schema (if provided)
-                return startExtraction(activeDocumentId);
-            })
-            .then(extractionResult => {
-                
-                console.log("Extraction started", extractionResult);
-                showAlert('info', 'Extraction started. Processing document...');
-                updateProgress('Processing document', 30);
-                
-                // STEP 3: Begin polling for status
-                startStatusPolling(activeDocumentId);
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                showAlert('danger', 'Error: ' + error.message);
-                stopLoading();
-                hideProgress();
-            });
-    });
-    
-    // Upload the document to the server
-    function uploadDocument() {
-        console.log("Uploading document...");
-        // Prepare form data for upload
-        const formData = new FormData();
-        const fileToUpload = fileInput.files[0];
-        formData.append('file', fileToUpload);
-        
-        // Update progress with file information
-        const fileSizeMB = (fileToUpload.size / (1024 * 1024)).toFixed(2);
-        updateProgress(`Uploading ${fileToUpload.name} (${fileSizeMB} MB)`, 10);
-        
-        return fetch('/api/upload', {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => {
-            // Special handling for upload errors
-            if (!response.ok) {
-                if (response.status === 400) {
-                    // For 400 errors, we want to show the specific error message
-                    return response.json().then(errorData => {
-                        const errorMessage = errorData.error || 'Invalid file format or content';
-                        showAlert('danger', `Upload failed: ${errorMessage}`);
-                        throw new Error(errorMessage);
-                    });
-                }
-                // For other errors, use default handling
-                return handleResponse(response);
-            }
-            return response.json();
-        });
-    }
-    
-    // Start the extraction process
-    function startExtraction(documentId) {
-        console.log("Starting extraction for document:", documentId);
-        
-        // Get the schema from the form
-        let schema = null;
-        
-        // If using JSON view, use the schema from the textarea
-        if (jsonSchemaContainer.style.display !== 'none') {
-            try {
-                const schemaText = schemaInput.value.trim();
-                if (schemaText) {
-                    schema = JSON.parse(schemaText);
-                }
-            } catch (error) {
-                throw new Error('Invalid JSON schema format: ' + error.message);
-            }
-        } else {
-            // Otherwise, build the schema from the fields
-            schema = updateSchemaFromFields(true); // get the schema without updating the input
-        }
-        
-        // Create the request body
-        const requestBody = {
-            document_id: documentId,
-            use_chunking: useChunkingCheckbox.checked
-        };
-        
-        // Add schema if provided
-        if (schema && Object.keys(schema).length > 0) {
-            requestBody.extraction_schema = schema;
-        }
-        
-        // Send extraction request
-        return fetch('/api/extract', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(requestBody)
-        })
-        .then(handleResponse);
-    }
-    
-    // Start polling for document status
-    function startStatusPolling(documentId) {
-        console.log("Starting status polling for document:", documentId);
-        stopStatusPolling(); // Clear any existing interval
-        
-        // Poll immediately and then at intervals
-        checkDocumentStatus(documentId);
-        statusInterval = setInterval(() => checkDocumentStatus(documentId), 2000);
-    }
-    
-    // Stop polling for document status
-    function stopStatusPolling() {
-        if (statusInterval) {
-            clearInterval(statusInterval);
-            statusInterval = null;
-        }
-    }
-    
-    // Check document status
-    function checkDocumentStatus(documentId) {
-        console.log("Checking status for document:", documentId);
-        fetch(`/api/status/${documentId}`)
-            .then(handleResponse)
-            .then(statusData => {
-                console.log("Document status:", statusData);
-                
-                // Update the progress based on status
-                updateProgressFromStatus(statusData.status, statusData);
-                
-                if (statusData.status === 'completed') {
-                    // Stop polling and fetch the results
-                    stopStatusPolling();
-                    console.log("Fetching results for document:", documentId);
-                    
-                    // Proceed to fetch the results
-                    fetchExtractionResults(documentId)
-                        .then(result => {
-                            console.log("Got extraction results:", result);
-                            
-                            if (!result.success) {
-                                showAlert('danger', 'Extraction failed: ' + (result.error || 'Unknown error'));
-                                stopLoading();
-                                hideProgress();
-                                return;
-                            }
-                            
-                            // Store the extracted data for later use
-                            extractedData = result.data;
-                            console.log("Extracted data:", extractedData);
-                            
-                            // Display the results
-                            displayResults(result.data);
-                            
-                            // Update UI state
-                            stopLoading();
-                            updateProgress('Extraction completed', 100, 'bg-success');
-                            
-                            // Enable copy button
-                            copyJsonBtn.disabled = false;
-                            
-                            // Show success message
-                            showAlert('success', 'Document extraction completed successfully!');
-                        })
-                        .catch(error => {
-                            console.error("Error fetching results:", error);
-                            showAlert('danger', 'Error fetching results: ' + error.message);
-                            stopLoading();
-                            hideProgress();
-                        });
-                } else if (statusData.status === 'failed') {
-                    // Show error and stop polling
-                    stopStatusPolling();
-                    showAlert('danger', 'Extraction failed: ' + (statusData.error || 'Unknown error'));
-                    stopLoading();
-                    hideProgress();
-                }
-                // For 'pending' or 'processing' status, continue polling
-            })
-            .catch(error => {
-                console.error("Error checking status:", error);
-                showAlert('danger', 'Error checking status: ' + error.message);
-                stopStatusPolling();
-                stopLoading();
-                hideProgress();
-            });
-    }
-    
-    // Fetch extraction results
-    function fetchExtractionResults(documentId) {
-        console.log("Fetching results for document:", documentId);
-        return fetch(`/api/result/${documentId}`)
-            .then(handleResponse)
-            .then(result => {
-                console.log("Raw API response for results:", result);
-                return result;
-            });
-    }
-    
-    // Standard response handler
-    function handleResponse(response) {
-        // First check if the response is ok
-        if (!response.ok) {
-            console.error("Response not OK:", response.status, response.statusText);
-            // Check if response is HTML
-            if (response.headers.get('content-type')?.includes('text/html')) {
-                return response.text().then(html => {
-                    throw new Error('Server returned HTML instead of JSON. This typically indicates a server error or authorization problem.');
-                });
-            }
-            throw new Error(`Server responded with status: ${response.status}`);
-        }
-        return response.json();
-    }
-    
-    // Copy JSON button
-    copyJsonBtn.addEventListener('click', function() {
-        if (!extractedData) return;
-        
-        const jsonStr = JSON.stringify(extractedData, null, 2);
-        navigator.clipboard.writeText(jsonStr).then(
-            function() {
-                showAlert('success', 'Results copied to clipboard');
-            },
-            function() {
-                showAlert('danger', 'Failed to copy results');
-                
-                // Fallback copy method
-                const textArea = document.createElement('textarea');
-                textArea.value = jsonStr;
-                document.body.appendChild(textArea);
-                textArea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textArea);
-            }
-        );
-    });
-    
-    // Table extraction form submission handler
-    tablesForm.addEventListener('submit', function(e) {
-        e.preventDefault();
-        
-        // Validate file input
-        if (!tablesFile.files || tablesFile.files.length === 0) {
-            showAlert('warning', 'Please select a PDF document to extract tables from.');
-            return;
-        }
-        
-        // Start loading state
-        startTablesLoading();
-        
-        // Prepare form data for upload
-        const formData = new FormData();
-        formData.append('file', tablesFile.files[0]);
-        
-        // Send request to extract tables
-        fetch('/api/extract-tables', {
-            method: 'POST',
-            body: formData
-        })
-        .then(handleResponse)
-        .then(result => {
-            stopTablesLoading();
+
+        try {
+            toggleLoading(true);
             
-            if (!result.success) {
-                showAlert('danger', 'Table extraction failed: ' + (result.error || 'Unknown error'));
+            // Reset UI
+            clearExtractionUI();
+            
+            // Upload the document
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const response = await fetch('/documents/upload', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (!response.ok || !data.success) {
+                showError(data.error || 'Failed to upload document');
                 return;
             }
             
-            // Display the table extraction results
-            displayTablesResults(result);
-        })
-        .catch(error => {
-            console.error('Error extracting tables:', error);
-            stopTablesLoading();
-            showAlert('danger', 'Error: ' + error.message);
-        });
-    });
-    
-    // Toggle JSON view button for schema input
-    toggleJsonViewBtn.addEventListener('click', function() {
-        // Update schema input if we're in fields mode
-        if (jsonSchemaContainer.style.display === 'none') {
-            updateSchemaFromFields();
-        }
-        
-        // Toggle display
-        const isJsonVisible = jsonSchemaContainer.style.display !== 'none';
-        jsonSchemaContainer.style.display = isJsonVisible ? 'none' : 'block';
-        fieldsBuilder.style.display = isJsonVisible ? 'block' : 'none';
-        
-        // Update button text
-        toggleJsonViewBtn.textContent = isJsonVisible ? 'Edit JSON' : 'Edit Fields';
-        
-        // If switching back to fields, update them from the schema
-        if (isJsonVisible) {
-            updateFieldsFromSchema();
+            currentDocumentId = data.document_id;
+            
+            // Update document status
+            updateDocumentStatus(currentDocumentId, {
+                status: data.indexing_status || 'pending',
+                message: 'Document uploaded successfully. Indexing in progress...',
+                file_name: file.name
+            });
+            
+            // Start polling for document status
+            checkDocumentStatus(currentDocumentId);
+            
+        } catch (error) {
+            showError(`Error uploading document: ${error.message}`);
+        } finally {
+            toggleLoading(false);
         }
     });
-    
-    // Add Field button
-    addFieldBtn.addEventListener('click', function() {
-        addField();
-        updateFieldDisplay();
-    });
-    
+
     /**
-     * Display extraction results in the results container
+     * Check document indexing status
      */
-    function displayResults(data) {
-        console.log("Displaying results:", data);
+    async function checkDocumentStatus(documentId) {
+        clearTimeout(documentStatusTimer);
         
-        // Check if results container exists
-        if (!resultsContainer) {
-            console.error("Results container is null");
-            return;
-        }
-        
-        // Clear previous results
-        resetResults();
-        
-        // Show the container
-        resultsContainer.style.display = 'block';
-        
-        // Debug the results container's children
-        console.log("Results container children:", resultsContainer.childNodes);
-        
-        // Get pre element for results
-        const preElement = document.getElementById('json-output');
-        console.log("Pre element for JSON output:", preElement);
-        
-        if (!preElement) {
-            console.error("Error: Could not find element with ID 'json-output'");
-            showAlert('danger', 'Error displaying results: UI element not found.');
+        try {
+            const response = await fetch(`/documents/${documentId}/status`);
+            const data = await response.json();
             
-            // Create the element if it doesn't exist
-            const newPreElement = document.createElement('pre');
-            newPreElement.id = 'json-output';
-            newPreElement.className = 'json-display';
-            resultsContainer.appendChild(newPreElement);
+            if (!response.ok) {
+                showError(data.error || 'Failed to check document status');
+                return;
+            }
             
-            console.log("Created new pre element:", newPreElement);
+            updateDocumentStatus(documentId, data);
             
-            // Try again with the new element
-            displayResults(data);
-            return;
-        }
-        
-        // Make sure the pre element is visible
-        preElement.classList.remove('d-none');
-        
-        // Make sure the pre element is visible by removing the d-none class
-        preElement.classList.remove('d-none');
-        
-        // Store the extracted data for the copy button
-        extractedData = data;
-        
-        // Add a friendly message if all fields are null
-        let allFieldsNull = true;
-        if (data && typeof data === 'object') {
-            allFieldsNull = Object.values(data).every(val => val === null);
-        }
-        
-        if (allFieldsNull && Object.keys(data).length > 0) {
-            // Add a friendly message before the JSON
-            preElement.innerHTML = `<div class="alert alert-warning mb-3">
-                <p><strong>Note:</strong> No specific data could be extracted for the requested fields.</p>
-                <p>This may be because:</p>
-                <ul>
-                    <li>The document doesn't contain the requested information</li>
-                    <li>The information format wasn't recognized</li>
-                    <li>The extraction model needs more specific field descriptions</li>
-                </ul>
-                <p>Try again with more specific field descriptions or try different fields.</p>
-            </div>`;
+            // If still indexing, poll again after a delay
+            if (data.status === 'indexing' || data.status === 'pending') {
+                documentStatusTimer = setTimeout(() => checkDocumentStatus(documentId), 2000);
+            } else if (data.status === 'indexed') {
+                // Enable extraction when document is indexed
+                enableExtractionControls(documentId);
+            }
             
-            // Still show the structure with null values
-            const formattedJson = syntaxHighlight(JSON.stringify(data, null, 2));
-            preElement.innerHTML += formattedJson;
-        } else {
-            // Format the data normally
-            const formattedJson = syntaxHighlight(JSON.stringify(data, null, 2));
-            
-            // Add formatted JSON to the results
-            preElement.innerHTML = formattedJson;
-        }
-        console.log("Set inner HTML of pre element");
-        
-        // Enable the copy button
-        copyJsonBtn.disabled = false;
-    }
-    
-    /**
-     * Reset the results container to its initial state
-     */
-    function resetResults() {
-        console.log("Resetting results");
-        
-        // Reset extracted data
-        extractedData = null;
-        
-        // Don't hide the container, just clear its contents
-        // resultsContainer.style.display = 'none';
-        
-        // Clear any previous results
-        const preElement = document.getElementById('json-output');
-        if (preElement) {
-            preElement.innerHTML = '';
-            console.log("Cleared pre element content");
-        } else {
-            console.log("No pre element found during reset");
+        } catch (error) {
+            showError(`Error checking document status: ${error.message}`);
         }
     }
-    
+
     /**
-     * Set UI to loading state
+     * Update document status in the UI
      */
-    function startLoading() {
-        loadingSpinner.style.display = 'block';
-        loadingOverlay.style.display = 'flex';
-        extractBtn.disabled = true;
-    }
-    
-    /**
-     * Reset UI from loading state
-     */
-    function stopLoading() {
-        loadingSpinner.style.display = 'none';
-        loadingOverlay.style.display = 'none';
-        extractBtn.disabled = false;
-    }
-    
-    /**
-     * Show progress container
-     */
-    function showProgress() {
-        progressContainer.classList.remove('d-none');
-    }
-    
-    /**
-     * Hide progress container
-     */
-    function hideProgress() {
-        progressContainer.classList.add('d-none');
-    }
-    
-    /**
-     * Reset progress display
-     */
-    function resetProgress() {
-        progressBar.style.width = '0%';
-        progressBar.setAttribute('aria-valuenow', 0);
-        progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated';
-        progressText.textContent = 'Starting...';
-    }
-    
-    /**
-     * Update progress display
-     */
-    function updateProgress(message, percentage, className = null) {
-        progressBar.style.width = percentage + '%';
-        progressBar.setAttribute('aria-valuenow', percentage);
+    function updateDocumentStatus(documentId, data) {
+        if (!data) return;
         
-        if (className) {
-            progressBar.className = `progress-bar ${className}`;
-        }
-        
-        progressText.textContent = message;
-    }
-    
-    /**
-     * Update progress based on document status
-     */
-    function updateProgressFromStatus(status, statusData) {
-        let percentage = 0;
-        let message = '';
-        
-        switch (status) {
+        let statusClass = '';
+        switch (data.status) {
             case 'pending':
-                percentage = 30;
-                message = 'Waiting for processing to begin...';
+                statusClass = 'status-pending';
                 break;
-            case 'processing':
-                // Calculate progress based on extraction_status
-                if (statusData.extraction_status) {
-                    const extractionStatuses = statusData.extraction_status;
-                    const totalFields = Object.keys(extractionStatuses).length + 1; // +1 for initial upload
-                    const completedFields = Object.values(extractionStatuses).filter(s => s === 'completed').length;
-                    
-                    // Calculate percentage from 30-90%
-                    percentage = 30 + (completedFields / totalFields) * 60;
-                    
-                    if (totalFields > 1) {
-                        message = `Processing document: ${completedFields}/${totalFields} fields completed`;
-                    } else {
-                        message = 'Processing document...';
-                    }
-                } else {
-                    percentage = 50;
-                    message = 'Processing document...';
-                }
+            case 'indexing':
+                statusClass = 'status-indexing';
                 break;
-            case 'completed':
-                percentage = 90; // We'll set to 100 after fetching results
-                message = 'Extraction completed, fetching results...';
+            case 'indexed':
+                statusClass = 'status-indexed';
                 break;
             case 'failed':
-                percentage = 100;
-                message = 'Extraction failed: ' + (statusData.error || 'Unknown error');
-                updateProgress(message, percentage, 'bg-danger');
-                return;
+                statusClass = 'status-failed';
+                break;
+            default:
+                statusClass = '';
         }
         
-        updateProgress(message, percentage);
-    }
-    
-    /**
-     * Show an alert message that fades after a few seconds
-     */
-    function showAlert(type, message) {
-        const alertsContainer = document.getElementById('alerts-container');
+        const fileName = data.file_name || 'Document';
         
-        if (!alertsContainer) {
-            console.error('Alerts container not found');
-            return;
-        }
-        
-        const alert = document.createElement('div');
-        alert.className = `alert alert-${type} alert-dismissible fade show`;
-        alert.innerHTML = `
-            ${message}
-            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        documentStatus.innerHTML = `
+            <div class="mb-2">
+                <strong>File:</strong> ${fileName}
+            </div>
+            <div>
+                <strong>Status:</strong> 
+                <span class="status ${statusClass}">${data.status}</span>
+            </div>
+            <div class="mt-2 text-secondary">
+                ${data.message || ''}
+            </div>
         `;
-        
-        alertsContainer.appendChild(alert);
-        
-        // Auto-dismiss after 5 seconds
-        setTimeout(() => {
-            try {
-                const bsAlert = new bootstrap.Alert(alert);
-                bsAlert.close();
-            } catch (e) {
-                // Fallback if Bootstrap JS not available
-                alert.style.opacity = '0';
-                setTimeout(() => alert.remove(), 500);
-            }
-        }, 5000);
     }
-    
+
     /**
-     * Syntax highlight JSON for display
+     * Enable extraction controls when document is ready
      */
-    function syntaxHighlight(json) {
-        json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
-            let cls = 'json-number';
-            if (/^"/.test(match)) {
-                if (/:$/.test(match)) {
-                    cls = 'json-key';
-                } else {
-                    cls = 'json-string';
-                }
-            } else if (/true|false/.test(match)) {
-                cls = 'json-boolean';
-            } else if (/null/.test(match)) {
-                cls = 'json-null';
-            }
-            return '<span class="' + cls + '">' + match + '</span>';
-        });
-    }
-    
-    function addField(name = '', description = '') {
-        // Create a new field row
-        const fieldRow = document.createElement('div');
-        fieldRow.className = 'field-row mb-3 border-bottom pb-3';
+    function enableExtractionControls(documentId) {
+        fieldsContainer.style.display = 'block';
+        extractButton.disabled = false;
         
-        fieldRow.innerHTML = `
-            <div class="row g-2">
-                <div class="col-5">
-                    <input type="text" class="form-control field-name" placeholder="Field name" value="${name}" />
-                </div>
-                <div class="col-6">
-                    <input type="text" class="form-control field-description" placeholder="Description (optional)" value="${description}" />
-                </div>
-                <div class="col-1">
-                    <button type="button" class="btn btn-outline-danger remove-field-btn">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
+        // Clear any previous fields
+        fieldsList.innerHTML = '';
+        if (fieldsList.children.length === 0) {
+            noFieldsMessage.style.display = 'block';
+        } else {
+            noFieldsMessage.style.display = 'none';
+        }
+        
+        // Reset extraction results
+        extractionStatus.innerHTML = '';
+        fieldStatusContainer.innerHTML = '';
+        jsonOutput.textContent = '';
+        jsonOutput.classList.add('d-none');
+    }
+
+    /**
+     * Add a field to extract
+     */
+    addFieldBtn.addEventListener('click', () => {
+        // Hide no fields message
+        noFieldsMessage.style.display = 'none';
+        
+        const fieldId = `field-${Date.now()}`;
+        const fieldItem = document.createElement('div');
+        fieldItem.className = 'field-item card p-3 mb-3';
+        fieldItem.id = fieldId;
+        
+        fieldItem.innerHTML = `
+            <button type="button" class="btn-close remove-field" aria-label="Remove field"></button>
+            <div class="mb-3">
+                <label for="${fieldId}-name" class="form-label">Field Name</label>
+                <input type="text" class="form-control field-name" id="${fieldId}-name" placeholder="e.g., revenue, company_name, etc.">
+            </div>
+            <div class="mb-0">
+                <label for="${fieldId}-description" class="form-label">Description (helps AI understand what to extract)</label>
+                <textarea class="form-control field-description" id="${fieldId}-description" rows="2" placeholder="e.g., The total annual revenue in USD for the fiscal year"></textarea>
             </div>
         `;
         
         // Add remove button functionality
-        const removeBtn = fieldRow.querySelector('.remove-field-btn');
-        removeBtn.addEventListener('click', function() {
-            fieldRow.remove();
-            updateFieldDisplay();
+        const removeBtn = fieldItem.querySelector('.remove-field');
+        removeBtn.addEventListener('click', () => {
+            fieldItem.remove();
+            if (fieldsList.children.length === 0) {
+                noFieldsMessage.style.display = 'block';
+            }
         });
         
-        // Add the field to the container
-        fieldsContainer.appendChild(fieldRow);
-    }
-    
-    function updateFieldDisplay() {
-        // Show/hide the no fields message
-        const hasFields = fieldsContainer.children.length > 0;
-        noFieldsMessage.style.display = hasFields ? 'none' : 'block';
-    }
-    
-    function updateSchemaFromFields(returnOnly = false) {
-        // Get all field rows
-        const fieldRows = fieldsContainer.querySelectorAll('.field-row');
+        fieldsList.appendChild(fieldItem);
         
-        // Build the schema object
+        // Enable extract button if there are fields and a document
+        extractButton.disabled = !(currentDocumentId && fieldsList.children.length > 0);
+    });
+
+    /**
+     * Get all fields from the UI
+     */
+    function getFields() {
         const fields = [];
+        const fieldItems = fieldsList.querySelectorAll('.field-item');
         
-        fieldRows.forEach(row => {
-            const nameInput = row.querySelector('.field-name');
-            const descInput = row.querySelector('.field-description');
+        fieldItems.forEach(item => {
+            const nameInput = item.querySelector('.field-name');
+            const descInput = item.querySelector('.field-description');
             
-            if (nameInput.value.trim()) {
-                const field = {
-                    name: nameInput.value.trim()
-                };
-                
-                if (descInput.value.trim()) {
-                    field.description = descInput.value.trim();
-                }
-                
-                fields.push(field);
-            }
-        });
-        
-        // Create the schema object
-        const schema = {
-            fields: fields
-        };
-        
-        // Either update the input or just return the value
-        if (!returnOnly) {
-            schemaInput.value = JSON.stringify(schema, null, 2);
-        }
-        
-        return schema;
-    }
-    
-    function updateFieldsFromSchema() {
-        try {
-            // Clear existing fields
-            fieldsContainer.innerHTML = '';
+            const name = nameInput.value.trim();
+            const description = descInput.value.trim();
             
-            // Parse the JSON schema
-            let schema = null;
-            
-            try {
-                const schemaText = schemaInput.value.trim();
-                if (schemaText) {
-                    schema = JSON.parse(schemaText);
-                }
-            } catch (error) {
-                showAlert('danger', 'Invalid JSON schema format: ' + error.message);
-                return;
-            }
-            
-            // If no schema or no fields, add a default empty field
-            if (!schema || !schema.fields || schema.fields.length === 0) {
-                addField();
-            } else {
-                // Add each field from the schema
-                schema.fields.forEach(field => {
-                    addField(field.name, field.description || '');
+            if (name) {
+                fields.push({
+                    name: name,
+                    description: description || name
                 });
             }
-            
-            // Update field display
-            updateFieldDisplay();
-            
-        } catch (error) {
-            console.error('Error updating fields from schema:', error);
-            showAlert('danger', 'Error updating fields: ' + error.message);
-        }
+        });
+        
+        return fields;
     }
-    
+
     /**
-     * Display table extraction results
+     * Start data extraction
      */
-    function displayTablesResults(data) {
-        // Store the tables data
-        extractedTables = data.tables;
-        
-        // Clear the table selector
-        tableSelector.innerHTML = '<option selected disabled>Select a table to view</option>';
-        
-        // Clear the results container
-        tablesResultsContainer.innerHTML = '';
-        
-        // Enable copy button
-        copyTablesJsonBtn.disabled = false;
-        
-        // If no tables found
-        if (!extractedTables || extractedTables.length === 0) {
-            tablesResultsContainer.innerHTML = `
-                <div class="alert alert-info">
-                    <i class="fas fa-info-circle me-2"></i>
-                    No tables found in the document
-                </div>
-            `;
+    extractButton.addEventListener('click', async () => {
+        if (!currentDocumentId) {
+            showError('No document selected');
             return;
         }
         
-        // Show table selector
-        tableSelector.classList.remove('d-none');
-        
-        // Add tables to the selector
-        extractedTables.forEach((table, index) => {
-            const option = document.createElement('option');
-            option.value = index;
-            option.textContent = `Table ${index + 1}${table.title ? ': ' + table.title : ''}`;
-            tableSelector.appendChild(option);
-        });
-        
-        // Show first table by default
-        displayTableDetails(extractedTables[0]);
-        
-        // Add selector change event
-        tableSelector.addEventListener('change', function() {
-            const selectedIndex = parseInt(this.value);
-            displayTableDetails(extractedTables[selectedIndex]);
-        });
-    }
-    
-    /**
-     * Display details of a specific table
-     */
-    function displayTableDetails(tableData) {
-        // Clear the results container
-        tablesResultsContainer.innerHTML = '';
-        
-        // Table title
-        if (tableData.title) {
-            const title = document.createElement('h4');
-            title.className = 'mb-3';
-            title.textContent = tableData.title;
-            tablesResultsContainer.appendChild(title);
+        const fields = getFields();
+        if (fields.length === 0) {
+            showError('Please add at least one field to extract');
+            return;
         }
         
-        // Table data
-        if (tableData.data && tableData.data.length > 0) {
-            // Render as HTML table
-            tablesResultsContainer.innerHTML += renderTableHtml(tableData);
+        try {
+            toggleLoading(true);
+            
+            // Reset extraction results
+            extractionStatus.innerHTML = '';
+            fieldStatusContainer.innerHTML = '';
+            jsonOutput.textContent = '';
+            jsonOutput.classList.add('d-none');
+            
+            // Create extraction request
+            const extractionData = {
+                document_id: currentDocumentId,
+                fields: fields
+            };
+            
+            const response = await fetch('/documents/extract', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(extractionData)
+            });
+            
+            const data = await response.json();
+            
+            if (!response.ok || !data.success) {
+                showError(data.error || 'Failed to start extraction');
+                return;
+            }
+            
+            // Update UI with extraction task info
+            currentTaskId = data.task_id;
+            extractionStatus.innerHTML = `
+                <div class="alert alert-info">
+                    <i class="fas fa-cog fa-spin me-2"></i>
+                    ${data.message || 'Extraction in progress...'}
+                </div>
+            `;
+            
+            // Initialize field status display
+            fieldStatusContainer.innerHTML = '';
+            fields.forEach(field => {
+                const fieldStatusDiv = document.createElement('div');
+                fieldStatusDiv.id = `field-status-${field.name}`;
+                fieldStatusDiv.className = 'field-status card card-body bg-secondary bg-opacity-10';
+                
+                fieldStatusDiv.innerHTML = `
+                    <div class="d-flex justify-content-between">
+                        <strong>${field.name}</strong>
+                        <span class="badge bg-warning">pending</span>
+                    </div>
+                `;
+                
+                fieldStatusContainer.appendChild(fieldStatusDiv);
+            });
+            
+            // Start polling for extraction status
+            checkExtractionStatus(currentTaskId);
+            
+        } catch (error) {
+            showError(`Error starting extraction: ${error.message}`);
+        } finally {
+            toggleLoading(false);
+        }
+    });
+
+    /**
+     * Check extraction status
+     */
+    async function checkExtractionStatus(taskId) {
+        clearTimeout(extractionTimer);
+        
+        try {
+            const response = await fetch(`/tasks/${taskId}/status`);
+            const data = await response.json();
+            
+            if (!response.ok) {
+                showError(data.error || 'Failed to check extraction status');
+                return;
+            }
+            
+            updateExtractionStatus(taskId, data);
+            
+            // If still processing, poll again after a delay
+            if (!data.completed) {
+                extractionTimer = setTimeout(() => checkExtractionStatus(taskId), 2000);
+            } else {
+                // Get final results when complete
+                getExtractionResult(taskId);
+            }
+            
+        } catch (error) {
+            showError(`Error checking extraction status: ${error.message}`);
+        }
+    }
+
+    /**
+     * Update extraction status in the UI
+     */
+    function updateExtractionStatus(taskId, data) {
+        if (!data) return;
+        
+        // Update overall status
+        let statusMessage = '';
+        if (data.completed) {
+            statusMessage = 'Extraction completed';
+            extractionStatus.innerHTML = `
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle me-2"></i>
+                    ${statusMessage}
+                </div>
+            `;
         } else {
-            tablesResultsContainer.innerHTML += `
-                <div class="alert alert-warning">
-                    <i class="fas fa-exclamation-triangle me-2"></i>
-                    This table contains no data
+            statusMessage = data.message || 'Extraction in progress...';
+            extractionStatus.innerHTML = `
+                <div class="alert alert-info">
+                    <i class="fas fa-cog fa-spin me-2"></i>
+                    ${statusMessage}
                 </div>
             `;
         }
-    }
-    
-    /**
-     * Render HTML for a table
-     */
-    function renderTableHtml(tableData) {
-        let html = '<div class="table-responsive"><table class="table table-striped table-bordered">';
         
-        // Headers
-        if (tableData.headers && tableData.headers.length > 0) {
-            html += '<thead><tr>';
-            tableData.headers.forEach(header => {
-                html += `<th>${header}</th>`;
-            });
-            html += '</tr></thead>';
-        }
-        
-        // Body
-        html += '<tbody>';
-        if (tableData.data && tableData.data.length > 0) {
-            tableData.data.forEach(row => {
-                html += '<tr>';
-                row.forEach(cell => {
-                    html += `<td>${cell}</td>`;
-                });
-                html += '</tr>';
+        // Update individual field statuses
+        if (data.fields && Array.isArray(data.fields)) {
+            data.fields.forEach(field => {
+                const fieldStatusEl = document.getElementById(`field-status-${field.field_name}`);
+                if (!fieldStatusEl) return;
+                
+                let badgeClass = 'bg-warning'; // default
+                if (field.status === 'completed') {
+                    badgeClass = 'bg-success';
+                } else if (field.status === 'processing') {
+                    badgeClass = 'bg-info';
+                } else if (field.status === 'failed') {
+                    badgeClass = 'bg-danger';
+                }
+                
+                fieldStatusEl.innerHTML = `
+                    <div class="d-flex justify-content-between">
+                        <strong>${field.field_name}</strong>
+                        <span class="badge ${badgeClass}">${field.status}</span>
+                    </div>
+                    ${field.error ? `<div class="text-danger mt-2">${field.error}</div>` : ''}
+                `;
             });
         }
-        html += '</tbody></table></div>';
+    }
+
+    /**
+     * Get final extraction result
+     */
+    async function getExtractionResult(taskId) {
+        try {
+            toggleLoading(true);
+            
+            const response = await fetch(`/tasks/${taskId}/result`);
+            const data = await response.json();
+            
+            if (!response.ok) {
+                showError(data.error || 'Failed to get extraction results');
+                return;
+            }
+            
+            displayExtractionResult(data);
+            
+        } catch (error) {
+            showError(`Error getting extraction results: ${error.message}`);
+        } finally {
+            toggleLoading(false);
+        }
+    }
+
+    /**
+     * Display extraction result
+     */
+    function displayExtractionResult(data) {
+        if (!data || !data.results) {
+            jsonOutput.textContent = 'No results found';
+            jsonOutput.classList.remove('d-none');
+            return;
+        }
         
-        return html;
+        // Format and display JSON result
+        const formattedJson = JSON.stringify(data.results, null, 2);
+        jsonOutput.textContent = formattedJson;
+        jsonOutput.classList.remove('d-none');
+        
+        // Scroll to results
+        jsonOutput.scrollIntoView({ behavior: 'smooth' });
     }
-    
+
     /**
-     * Start loading state for table extraction
+     * Clear results
      */
-    function startTablesLoading() {
-        tablesLoadingSpinner.classList.remove('d-none');
-        extractTablesBtn.disabled = true;
-    }
-    
+    clearResultsBtn.addEventListener('click', () => {
+        clearExtractionUI();
+    });
+
     /**
-     * Stop loading state for table extraction
+     * Clear extraction UI
      */
-    function stopTablesLoading() {
-        tablesLoadingSpinner.classList.add('d-none');
-        extractTablesBtn.disabled = false;
+    function clearExtractionUI() {
+        // Clear timers
+        clearTimeout(extractionTimer);
+        
+        // Reset extraction state
+        currentTaskId = null;
+        
+        // Clear UI
+        extractionStatus.innerHTML = '';
+        fieldStatusContainer.innerHTML = '';
+        jsonOutput.textContent = '';
+        jsonOutput.classList.add('d-none');
+        
+        // Show empty state
+        const emptyState = document.createElement('div');
+        emptyState.className = 'text-center py-5 text-secondary';
+        emptyState.innerHTML = `
+            <i class="fas fa-file-alt fa-3x mb-3"></i>
+            <p>Submit an extraction request to see results</p>
+        `;
+        
+        resultsContainer.innerHTML = '';
+        resultsContainer.appendChild(emptyState);
+        resultsContainer.appendChild(jsonOutput);
     }
-    
-    // Initialize UI
-    // Set alerts container to be empty
-    const alertsContainer = document.getElementById('alerts-container');
-    if (alertsContainer) {
-        alertsContainer.innerHTML = '';
+
+    /**
+     * Show error message
+     */
+    function showError(message) {
+        errorContainer.textContent = message;
+        errorContainer.style.display = 'block';
+        
+        // Auto-hide after 5 seconds
+        setTimeout(() => {
+            errorContainer.style.display = 'none';
+        }, 5000);
     }
-    
-    // Show fields builder initially, hide JSON input
-    jsonSchemaContainer.style.display = 'none';
-    fieldsBuilder.style.display = 'block';
-    
-    // Add default empty field
-    addField();
-    updateFieldDisplay();
-    
-    // Log HTML structure of results container for debugging
-    console.log("Results container HTML:", resultsContainer ? resultsContainer.innerHTML : "null");
-    
-    // Check for json-output element
-    const jsonOutput = document.getElementById('json-output');
-    console.log("JSON output element:", jsonOutput);
-    
-    // If json-output doesn't exist, create it
-    if (!jsonOutput && resultsContainer) {
-        const preElement = document.createElement('pre');
-        preElement.id = 'json-output';
-        preElement.className = 'json-display';
-        // Append it to the results container
-        resultsContainer.appendChild(preElement);
-        console.log("Created json-output element:", preElement);
+
+    /**
+     * Toggle loading indicator
+     */
+    function toggleLoading(show) {
+        loadingIndicator.style.display = show ? 'flex' : 'none';
     }
 });

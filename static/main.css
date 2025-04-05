@@ -1,58 +1,131 @@
-/* Custom styles for PDF Data Extractor */
+/* Document Extraction Frontend Styles */
 
-.json-result {
-    max-height: 600px;
-    overflow-y: auto;
-    background-color: var(--bs-dark);
-    border-radius: 0.375rem;
+/* Main layout */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
 }
 
-.json-result pre {
-    margin-bottom: 0;
-    padding: 1rem;
+.section {
+    margin-bottom: 2rem;
 }
 
+/* Card styling */
 .card {
-    border-color: rgba(255, 255, 255, 0.1);
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    margin-bottom: 1.5rem;
+    background-color: var(--bs-dark);
+    border: 1px solid var(--bs-gray-700);
+    border-radius: 0.5rem;
 }
 
 .card-header {
-    background-color: rgba(255, 255, 255, 0.05);
-    border-bottom-color: rgba(255, 255, 255, 0.1);
+    background-color: var(--bs-gray-800);
+    border-bottom: 1px solid var(--bs-gray-700);
+    padding: 1rem;
 }
 
-/* Custom scrollbar for code blocks */
-.json-result::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+.card-body {
+    padding: 1.5rem;
 }
 
-.json-result::-webkit-scrollbar-track {
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 4px;
-}
-
-.json-result::-webkit-scrollbar-thumb {
-    background-color: rgba(255, 255, 255, 0.2);
-    border-radius: 4px;
-}
-
-.json-result::-webkit-scrollbar-thumb:hover {
-    background-color: rgba(255, 255, 255, 0.3);
-}
-
-/* Icons in the template */
-.bi {
+/* Status indicators */
+.status {
     display: inline-block;
-    vertical-align: -0.125em;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
 }
 
-.bi-info-circle::before {
-    content: "ℹ";
+.status-pending {
+    background-color: var(--bs-warning);
+    color: var(--bs-dark);
 }
 
-.bi-file-earmark-text::before {
-    content: "📄";
+.status-indexing, .status-processing {
+    background-color: var(--bs-info);
+    color: var(--bs-dark);
+}
+
+.status-indexed, .status-completed {
+    background-color: var(--bs-success);
+    color: var(--bs-dark);
+}
+
+.status-failed {
+    background-color: var(--bs-danger);
+    color: var(--bs-light);
+}
+
+/* Field list */
+.field-item {
+    position: relative;
+    margin-bottom: 1rem;
+}
+
+.remove-field {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+}
+
+/* Field status container */
+#field-status-container {
+    margin: 1rem 0;
+}
+
+.field-status {
+    margin-bottom: 0.5rem;
+    padding: 0.5rem;
+    border-radius: 0.25rem;
+}
+
+/* Loading indicator */
+#loading-indicator {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+
+/* JSON display */
+.json-display {
+    background-color: var(--bs-gray-900);
+    color: var(--bs-light);
+    border-radius: 0.25rem;
+    padding: 1rem;
+    white-space: pre-wrap;
+    overflow-x: auto;
+    font-family: 'Courier New', monospace;
+    margin-top: 1rem;
+}
+
+.copy-btn {
+    float: right;
+    margin-top: 1rem;
+}
+
+/* Error container */
+#error-container {
+    display: none;
+    padding: 1rem;
+    background-color: var(--bs-danger);
+    color: var(--bs-light);
+    border-radius: 0.25rem;
+    margin-bottom: 1rem;
+}
+
+/* Progress indicator */
+.progress-container {
+    margin: 1rem 0;
+}
+
+.progress {
+    height: 0.5rem;
 }

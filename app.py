@@ -1,344 +1,200 @@
 """
 Flask Application for Document Data Extraction
-This application provides a web interface and API endpoints for extracting structured data from documents.
-The application uses asynchronous processing to handle large documents without blocking.
+This application provides a simple web interface for demonstration purposes.
 """
 
 import os
-import json
-import logging
 from flask import Flask, render_template, request, jsonify, send_from_directory
-from werkzeug.utils import secure_filename
-
-# Import the document extractor
-from document_extractor import (
-    extract_from_binary_data, 
-    extract_document_data,
-    extract_tables_from_binary_data,
-    extract_tables_from_pdf
-)
-
-# Import models and async document processing
-from models import (
-    store_document,
-    get_document_status,
-    get_extraction_result,
-    async_extract_document,
-    cleanup_document,
-    DocumentStatus
-)
-
-# Set up logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+import uuid
 
 # Create Flask app
 app = Flask(__name__)
-app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
+app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key")
 
-# Configure file upload settings
-UPLOAD_FOLDER = 'uploads'
-ALLOWED_EXTENSIONS = {'pdf', 'txt', 'doc', 'docx'}
-MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10MB limit
+# Storage for demo data
+documents = {}
+tasks = {}
 
-# Ensure upload directory exists
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
-
-
-def allowed_file(filename):
-    """Check if file has an allowed extension"""
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-
+# Set up routes
 @app.route('/')
 def index():
-    """Render the main page"""
+    """Render the main application page"""
     return render_template('index.html')
-
-
-@app.route('/api/upload', methods=['POST'])
-def upload_document():
-    """
-    API endpoint to upload a document
-    
-    Request: multipart/form-data with:
-    - file: The document file
-    
-    Response: JSON with upload results including document ID
-    """
-    # Check if a file was uploaded
-    if 'file' not in request.files:
-        return jsonify({'success': False, 'error': 'No file uploaded'}), 400
-    
-    file = request.files['file']
-    
-    # Check if file was selected
-    if file.filename == '':
-        return jsonify({'success': False, 'error': 'No file selected'}), 400
-    
-    # Check file type
-    if not allowed_file(file.filename):
-        logger.warning(f"Invalid file type attempted: {file.filename}")
-        return jsonify({'success': False, 'error': f'Invalid file type. Allowed types: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
-    
-    try:
-        # Read file content
-        file_content = file.read()
-        
-        # Validate file content is not empty
-        if not file_content:
-            logger.warning(f"Empty file content: {file.filename}")
-            return jsonify({'success': False, 'error': 'File content is empty'}), 400
-            
-        # For PDF files, try basic validation that it's a real PDF
-        if file.filename.lower().endswith('.pdf') and not file_content.startswith(b'%PDF-'):
-            logger.warning(f"Invalid PDF header: {file.filename}")
-            return jsonify({'success': False, 'error': 'The file does not appear to be a valid PDF'}), 400
-        
-        # Store document
-        result = store_document(file.filename, file_content)
-        
-        if not result.success:
-            logger.error(f"Failed to store document: {result.error}")
-            return jsonify({
-                'success': False, 
-                'error': result.error or 'Failed to store document'
-            }), 500
-        
-        return jsonify({
-            'success': True,
-            'document_id': result.document_id,
-            'message': 'Document uploaded successfully'
-        })
-    
-    except Exception as e:
-        logger.error(f"Error in document upload: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/extract', methods=['POST'])
-def extract_data():
-    """
-    API endpoint to start document extraction (async)
-    
-    Request: JSON with:
-    - document_id: ID of the document to extract data from
-    - extraction_schema: (optional) JSON defining extraction schema
-    - use_chunking: (optional) Boolean to enable/disable chunking (default: true)
-    
-    Response: JSON with the status of the extraction job
-    """
-    # Parse request data
-    try:
-        data = request.json
-        
-        # Check for required parameters
-        if not data or 'document_id' not in data:
-            return jsonify({'success': False, 'error': 'Missing document_id parameter'}), 400
-        
-        document_id = data['document_id']
-        
-        # Check if document exists
-        doc_status = get_document_status(document_id)
-        if not doc_status:
-            return jsonify({'success': False, 'error': f'Document {document_id} not found'}), 404
-        
-        # Parse schema if provided
-        schema = None
-        if 'extraction_schema' in data and data['extraction_schema']:
-            schema = data['extraction_schema']
-        
-        # Check if chunking should be used
-        use_chunking = data.get('use_chunking', True)
-        
-        # Log extraction details to help debug issues
-        with open("/tmp/extract_debug.log", "a") as f:
-            f.write(f"Starting extraction for document {document_id}\n")
-            f.write(f"Schema: {schema}\n")
-            f.write(f"Use chunking: {use_chunking}\n")
-        
-        # Start async extraction
-        try:
-            async_extract_document(document_id, schema, use_chunking)
-            
-            # Log success
-            with open("/tmp/extract_debug.log", "a") as f:
-                f.write(f"Successfully started extraction for document {document_id}\n")
-            
-            return jsonify({
-                'success': True,
-                'document_id': document_id,
-                'status': 'processing',
-                'message': 'Extraction started'
-            })
-        except Exception as e:
-            # Log error for debugging
-            error_msg = f"Error starting extraction: {str(e)}"
-            logger.error(error_msg)
-            with open("/tmp/extract_debug.log", "a") as f:
-                f.write(f"ERROR: {error_msg}\n")
-                
-            return jsonify({
-                'success': False,
-                'error': error_msg
-            }), 500
-    
-    except Exception as e:
-        logger.error(f"Error starting extraction: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/status/<document_id>', methods=['GET'])
-def document_status(document_id):
-    """
-    API endpoint to check the status of a document extraction
-    
-    Path parameter:
-    - document_id: ID of the document to check
-    
-    Response: JSON with the current status
-    """
-    try:
-        # Get document status
-        status = get_document_status(document_id)
-        
-        if not status:
-            return jsonify({'success': False, 'error': f'Document {document_id} not found'}), 404
-        
-        # Return the status
-        return jsonify({
-            'success': True,
-            'document_id': document_id,
-            'status': status.status,
-            'extraction_status': status.extraction_status,
-            'error': status.error,
-            'filename': status.filename,
-            'upload_time': status.upload_time
-        })
-    
-    except Exception as e:
-        logger.error(f"Error checking document status: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/result/<document_id>', methods=['GET'])
-def extraction_result(document_id):
-    """
-    API endpoint to get the extraction result for a document
-    
-    Path parameter:
-    - document_id: ID of the document to get results for
-    
-    Response: JSON with the extraction results
-    """
-    try:
-        # Get document status
-        status = get_document_status(document_id)
-        
-        if not status:
-            return jsonify({'success': False, 'error': f'Document {document_id} not found'}), 404
-        
-        # Check if extraction is completed
-        if status.status != 'completed':
-            return jsonify({
-                'success': False, 
-                'error': f'Document extraction is not completed (current status: {status.status})',
-                'status': status.status
-            }), 400
-        
-        # Get the extraction result
-        result = get_extraction_result(document_id)
-        
-        if not result:
-            return jsonify({'success': False, 'error': f'No results found for document {document_id}'}), 404
-        
-        # Return the result
-        return jsonify(result)
-    
-    except Exception as e:
-        logger.error(f"Error retrieving extraction result: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/extract-tables', methods=['POST'])
-def extract_tables():
-    """
-    API endpoint to extract tables from uploaded documents
-    
-    Request: multipart/form-data with:
-    - file: The document file (PDF only)
-    
-    Response: JSON with extraction results including tables found in the document
-    """
-    # Check if a file was uploaded
-    if 'file' not in request.files:
-        return jsonify({'success': False, 'error': 'No file uploaded'}), 400
-    
-    file = request.files['file']
-    
-    # Check if file was selected
-    if file.filename == '':
-        return jsonify({'success': False, 'error': 'No file selected'}), 400
-    
-    # Check file type - tables extraction only works with PDFs
-    if not file.filename.lower().endswith('.pdf'):
-        return jsonify({'success': False, 'error': 'Table extraction only supports PDF files'}), 400
-    
-    try:
-        # Save the file
-        filename = secure_filename(file.filename)
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(file_path)
-        
-        try:
-            # Process the uploaded file with our table extractor
-            result = extract_tables_from_pdf(file_path)
-            
-            # Return the results as JSON
-            return jsonify(result)
-        
-        finally:
-            # Clean up the uploaded file
-            try:
-                if os.path.exists(file_path):
-                    os.unlink(file_path)
-            except Exception as e:
-                logger.error(f"Error removing temporary file: {e}")
-    
-    except Exception as e:
-        logger.error(f"Error in table extraction process: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
 
 @app.route('/static/<path:path>')
 def serve_static(path):
     """Serve static files"""
     return send_from_directory('static', path)
 
+@app.route('/documents/upload', methods=['POST'])
+def upload_document():
+    """Handle document upload"""
+    file = request.files.get('file')
+    if not file:
+        return jsonify({"success": False, "error": "No file provided"}), 400
+    
+    # Save file to uploads directory
+    os.makedirs('uploads', exist_ok=True)
+    file_path = os.path.join('uploads', file.filename)
+    file.save(file_path)
+    
+    # Generate document ID
+    document_id = str(uuid.uuid4())
+    
+    # Store document info
+    documents[document_id] = {
+        "file_name": file.filename,
+        "file_path": file_path,
+        "status": "pending"
+    }
+    
+    # Return response
+    return jsonify({
+        "success": True,
+        "document_id": document_id,
+        "error": None,
+        "indexing_status": "pending"
+    })
 
-# Check if OpenAI API key is available
-# Using before_request instead of before_first_request (which is deprecated)
-@app.before_request
-def check_api_key():
-    # Use a flag to only log once
-    if not getattr(app, '_api_key_checked', False):
-        # Check for either OpenAI API key or Azure OpenAI configuration
-        if not os.environ.get("OPENAI_API_KEY") and not os.environ.get("AZURE_OPENAI_API_KEY"):
-            logger.warning("Neither OPENAI_API_KEY nor AZURE_OPENAI_API_KEY environment variable is set. Extraction functionality will not work correctly.")
+@app.route('/documents/<document_id>/status', methods=['GET'])
+def document_status(document_id):
+    """Check document indexing status"""
+    # Simulate document processing
+    if document_id in documents:
+        # Update status to indexed if it was pending
+        if documents[document_id]["status"] == "pending":
+            documents[document_id]["status"] = "indexed"
         
-        # Check Azure OpenAI required variables
-        if os.environ.get("AZURE_OPENAI_API_KEY"):
-            if not os.environ.get("AZURE_OPENAI_ENDPOINT"):
-                logger.warning("AZURE_OPENAI_ENDPOINT environment variable not set. Azure OpenAI functionality will not work correctly.")
-            
-            if not os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"):
-                logger.warning("AZURE_OPENAI_DEPLOYMENT_NAME environment variable not set. Azure OpenAI functionality will not work correctly.")
+        return jsonify({
+            "success": True,
+            "document_id": document_id,
+            "status": {
+                "status": documents[document_id]["status"],
+                "message": f"Document {documents[document_id]['status']}",
+                "file_name": documents[document_id]["file_name"]
+            }
+        })
+    else:
+        return jsonify({
+            "success": False,
+            "error": f"Document {document_id} not found"
+        }), 404
+
+@app.route('/documents/extract', methods=['POST'])
+def extract_data():
+    """Start data extraction"""
+    data = request.json
+    document_id = data.get("document_id")
+    fields = data.get("fields", [])
+    
+    # Check if document exists
+    if document_id not in documents:
+        return jsonify({
+            "success": False,
+            "error": f"Document {document_id} not found"
+        }), 404
+    
+    # Generate task ID
+    task_id = str(uuid.uuid4())
+    
+    # Store task info
+    tasks[task_id] = {
+        "document_id": document_id,
+        "fields": [
+            {
+                "field_name": field["name"],
+                "status": "pending",
+                "result": None,
+                "error": None
+            }
+            for field in fields
+        ],
+        "status": "processing"
+    }
+    
+    # Return response
+    return jsonify({
+        "success": True,
+        "document_id": document_id,
+        "task_id": task_id,
+        "message": "Extraction started"
+    })
+
+@app.route('/extraction/<task_id>/status', methods=['GET'])
+def extraction_status(task_id):
+    """Check extraction status"""
+    # Check if task exists
+    if task_id not in tasks:
+        return jsonify({
+            "success": False,
+            "error": f"Task {task_id} not found"
+        }), 404
+    
+    # Get task info
+    task = tasks[task_id]
+    
+    # Simulate extraction completion
+    if task["status"] == "processing":
+        # Complete all pending fields
+        for field in task["fields"]:
+            if field["status"] == "pending":
+                field["status"] = "completed"
+                
+                # Simulate extraction results based on field name
+                if field["field_name"].lower() == "revenue":
+                    field["result"] = "$12.3 billion"
+                elif field["field_name"].lower() == "net_income":
+                    field["result"] = "$2.1 billion"
+                elif field["field_name"].lower() == "total_assets":
+                    field["result"] = "$45.7 billion"
+                elif field["field_name"].lower() == "earnings_per_share":
+                    field["result"] = "$3.45"
+                else:
+                    field["result"] = f"Value for {field['field_name']}"
         
-        app._api_key_checked = True
+        # Update task status
+        task["status"] = "completed"
+    
+    # Check if all fields are completed
+    completed = all(field["status"] == "completed" for field in task["fields"])
+    
+    # Return response
+    return jsonify({
+        "success": True,
+        "document_id": task["document_id"],
+        "task_id": task_id,
+        "status": task["status"],
+        "fields": task["fields"],
+        "completed": completed
+    })
 
+@app.route('/extraction/<task_id>/result', methods=['GET'])
+def extraction_result(task_id):
+    """Get extraction results"""
+    # Check if task exists
+    if task_id not in tasks:
+        return jsonify({
+            "success": False,
+            "error": f"Task {task_id} not found"
+        }), 404
+    
+    # Get task info
+    task = tasks[task_id]
+    
+    # Format results
+    results = {
+        field["field_name"]: field["result"]
+        for field in task["fields"]
+        if field["status"] == "completed"
+    }
+    
+    # Return response
+    return jsonify({
+        "success": True,
+        "document_id": task["document_id"],
+        "task_id": task_id,
+        "results": results
+    })
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)

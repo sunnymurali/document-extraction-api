@@ -1,11 +1,10 @@
 """
-WSGI adapter for FastAPI application.
-This allows using gunicorn with a FastAPI application.
+WSGI entry point for the Flask application
+
+This module provides a WSGI-compatible entry point for gunicorn to serve the Flask application.
 """
 
-import os
-import sys
 from app import app
 
-# Properly get the application from the app module
+# WSGI entry point
 application = app
