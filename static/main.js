@@ -118,13 +118,33 @@ document.addEventListener('DOMContentLoaded', function() {
         console.log("Uploading document...");
         // Prepare form data for upload
         const formData = new FormData();
-        formData.append('file', fileInput.files[0]);
+        const fileToUpload = fileInput.files[0];
+        formData.append('file', fileToUpload);
+        
+        // Update progress with file information
+        const fileSizeMB = (fileToUpload.size / (1024 * 1024)).toFixed(2);
+        updateProgress(`Uploading ${fileToUpload.name} (${fileSizeMB} MB)`, 10);
         
         return fetch('/api/upload', {
             method: 'POST',
             body: formData
         })
-        .then(handleResponse);
+        .then(response => {
+            // Special handling for upload errors
+            if (!response.ok) {
+                if (response.status === 400) {
+                    // For 400 errors, we want to show the specific error message
+                    return response.json().then(errorData => {
+                        const errorMessage = errorData.error || 'Invalid file format or content';
+                        showAlert('danger', `Upload failed: ${errorMessage}`);
+                        throw new Error(errorMessage);
+                    });
+                }
+                // For other errors, use default handling
+                return handleResponse(response);
+            }
+            return response.json();
+        });
     }
     
     // Start the extraction process
@@ -178,49 +198,43 @@ document.addEventListener('DOMContentLoaded', function() {
                         // Fetch the extraction results
                         fetchExtractionResults(documentId)
                             .then(resultData => {
-                                console.log("Extraction results:", resultData);
+                                if (!resultData.success) {
+                                    throw new Error(resultData.error || 'Failed to get extraction results');
+                                }
+                                
+                                // Display the results
+                                displayResults(resultData.data);
                                 
                                 // Store the data for copy functionality
-                                extractedData = resultData;
+                                extractedData = resultData.data;
                                 
-                                // Display results
-                                displayResults(resultData);
-                                
-                                // Enable copy button
-                                copyJsonBtn.disabled = false;
-                                
-                                showAlert('success', 'Document processed successfully');
-                                updateProgress('Completed', 100);
-                                
-                                // Hide progress after a delay
-                                setTimeout(() => {
-                                    hideProgress();
-                                }, 2000);
+                                // Update progress and stop loading
+                                updateProgress('Extraction completed', 100, 'success');
+                                stopLoading();
+                                showAlert('success', 'Extraction completed successfully');
                             })
                             .catch(error => {
                                 console.error('Error fetching results:', error);
-                                showAlert('danger', 'Error fetching results: ' + error.message);
-                            })
-                            .finally(() => {
+                                updateProgress('Failed to get results: ' + error.message, 0, 'danger');
                                 stopLoading();
+                                showAlert('danger', 'Error fetching results: ' + error.message);
                             });
                     } else if (status === 'failed') {
                         stopStatusPolling();
-                        showAlert('danger', statusResult.error || 'Document processing failed');
-                        updateProgress('Failed', 100, 'bg-danger');
+                        updateProgress('Extraction failed: ' + (statusResult.error || 'Unknown error'), 0, 'danger');
                         stopLoading();
+                        showAlert('danger', 'Extraction failed: ' + (statusResult.error || 'Unknown error'));
                     }
                 })
                 .catch(error => {
                     console.error('Error polling status:', error);
-                    stopStatusPolling();
-                    showAlert('danger', 'Error checking status: ' + error.message);
-                    stopLoading();
+                    updateProgress('Error checking status: ' + error.message, 0, 'warning');
+                    // Don't stop polling on transient errors
                 });
         }, 2000);
     }
     
-    // Stop polling for document status
+    // Stop status polling
     function stopStatusPolling() {
         if (statusPollingInterval) {
             clearInterval(statusPollingInterval);
@@ -228,7 +242,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    // Check document status
+    // Check the status of a document
     function checkDocumentStatus(documentId) {
         console.log("Checking status for document:", documentId);
         return fetch(`/api/status/${documentId}`)
@@ -278,132 +292,196 @@ document.addEventListener('DOMContentLoaded', function() {
         );
     });
     
+    // Tables Copy JSON button
+    copyTablesJsonBtn.addEventListener('click', function() {
+        const tableResults = document.getElementById('tables-json-output');
+        if (!tableResults || !tableResults.textContent) return;
+        
+        navigator.clipboard.writeText(tableResults.textContent).then(
+            function() {
+                showAlert('info', 'Tables JSON copied to clipboard');
+                // Visual feedback
+                copyTablesJsonBtn.innerText = 'Copied!';
+                setTimeout(() => {
+                    copyTablesJsonBtn.innerText = 'Copy Tables JSON';
+                }, 2000);
+            },
+            function() {
+                showAlert('danger', 'Failed to copy to clipboard');
+            }
+        );
+    });
+    
+    // Handle table form submission
+    tablesForm.addEventListener('submit', function(event) {
+        event.preventDefault();
+        
+        // Validate file selection
+        if (!tablesFileInput.files || tablesFileInput.files.length === 0) {
+            showAlert('danger', 'Please select a PDF file to extract tables from');
+            return;
+        }
+        
+        // Check file type
+        const file = tablesFileInput.files[0];
+        if (!file.name.toLowerCase().endsWith('.pdf')) {
+            showAlert('danger', 'Table extraction only supports PDF files');
+            return;
+        }
+        
+        // Reset previous results
+        tablesResultsContainer.innerHTML = '';
+        tablesResultsContainer.style.display = 'none';
+        
+        // Start loading state
+        startTablesLoading();
+        
+        // Prepare form data for upload
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        // Upload and extract tables
+        fetch('/api/extract-tables', {
+            method: 'POST',
+            body: formData
+        })
+        .then(handleResponse)
+        .then(result => {
+            stopTablesLoading();
+            
+            if (!result.success) {
+                showAlert('danger', 'Table extraction failed: ' + (result.error || 'Unknown error'));
+                return;
+            }
+            
+            // Display the table extraction results
+            displayTablesResults(result);
+        })
+        .catch(error => {
+            console.error('Error extracting tables:', error);
+            stopTablesLoading();
+            showAlert('danger', 'Error: ' + error.message);
+        });
+    });
+    
+    // Toggle JSON view button for schema input
+    toggleJsonViewBtn.addEventListener('click', function() {
+        // Update schema input if we're in fields mode
+        if (jsonSchemaContainer.style.display === 'none') {
+            updateSchemaFromFields();
+        }
+        
+        // Toggle display
+        const isJsonVisible = jsonSchemaContainer.style.display !== 'none';
+        jsonSchemaContainer.style.display = isJsonVisible ? 'none' : 'block';
+        fieldsBuilder.style.display = isJsonVisible ? 'block' : 'none';
+        
+        // Update button text
+        toggleJsonViewBtn.textContent = isJsonVisible ? 'Edit JSON' : 'Edit Fields';
+        
+        // If switching back to fields, update them from the schema
+        if (isJsonVisible) {
+            updateFieldsFromSchema();
+        }
+    });
+    
+    // Add Field button
+    addFieldBtn.addEventListener('click', function() {
+        addField();
+        updateFieldDisplay();
+    });
+    
     /**
      * Display extraction results in the results container
      */
     function displayResults(data) {
         // Clear previous results
-        resultsContainer.innerHTML = '';
+        resetResults();
         
-        if (data.success && data.data) {
-            // Show chunking information if available
-            let chunkingInfo = '';
-            if (data.chunking_info) {
-                if (data.chunking_info.used) {
-                    chunkingInfo = `
-                        <div class="alert alert-info mb-3">
-                            <h5>Document Processing Information</h5>
-                            <p>Document was processed using chunking: ${data.chunking_info.chunks_processed} of ${data.chunking_info.total_chunks} chunks processed.</p>
-                        </div>
-                    `;
-                } else {
-                    chunkingInfo = `
-                        <div class="alert alert-info mb-3">
-                            <p>Document was processed as a single chunk (chunking disabled or not needed).</p>
-                        </div>
-                    `;
-                }
-            }
-            
-            // Create results display
-            const resultHtml = `
-                ${chunkingInfo}
-                <div class="results-content">
-                    <pre class="json-display">${syntaxHighlight(JSON.stringify(data.data, null, 2))}</pre>
-                </div>
-            `;
-            resultsContainer.innerHTML = resultHtml;
-        } else {
-            // Show error
-            resultsContainer.innerHTML = `
-                <div class="alert alert-warning">
-                    <h4 class="alert-heading">Extraction Problem</h4>
-                    <p>${data.error || 'No data could be extracted from the document'}</p>
-                </div>
-            `;
-        }
+        // Show the container
+        resultsContainer.style.display = 'block';
+        
+        // Get pre element for results
+        const preElement = document.getElementById('json-output');
+        
+        // Format the data
+        const formattedJson = syntaxHighlight(JSON.stringify(data, null, 2));
+        
+        // Add formatted JSON to the results
+        preElement.innerHTML = formattedJson;
     }
     
     /**
      * Reset the results container to its initial state
      */
     function resetResults() {
-        resultsContainer.innerHTML = `
-            <div class="text-center py-5 text-secondary">
-                <i class="fas fa-file-alt fa-3x mb-3"></i>
-                <p>Upload a document to see extraction results</p>
-            </div>
-        `;
-        copyJsonBtn.disabled = true;
+        // Reset extracted data
         extractedData = null;
+        
+        // Reset the results container
+        resultsContainer.style.display = 'none';
+        
+        // Clear any previous results
+        const preElement = document.getElementById('json-output');
+        if (preElement) {
+            preElement.innerHTML = '';
+        }
     }
     
     /**
      * Set UI to loading state
      */
     function startLoading() {
+        loadingSpinner.style.display = 'block';
+        loadingOverlay.style.display = 'flex';
         extractBtn.disabled = true;
-        loadingSpinner.classList.remove('d-none');
-        loadingOverlay.classList.remove('d-none');
     }
     
     /**
      * Reset UI from loading state
      */
     function stopLoading() {
+        loadingSpinner.style.display = 'none';
+        loadingOverlay.style.display = 'none';
         extractBtn.disabled = false;
-        loadingSpinner.classList.add('d-none');
-        loadingOverlay.classList.add('d-none');
     }
     
     /**
      * Show progress container
      */
     function showProgress() {
-        if (progressContainer) {
-            progressContainer.classList.remove('d-none');
-        }
+        progressContainer.style.display = 'block';
     }
     
     /**
      * Hide progress container
      */
     function hideProgress() {
-        if (progressContainer) {
-            progressContainer.classList.add('d-none');
-        }
+        progressContainer.style.display = 'none';
     }
     
     /**
      * Reset progress display
      */
     function resetProgress() {
-        if (progressBar) {
-            progressBar.style.width = '0%';
-            progressBar.setAttribute('aria-valuenow', 0);
-            progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated';
-        }
-        if (progressText) {
-            progressText.textContent = 'Starting...';
-        }
+        progressBar.style.width = '0%';
+        progressBar.textContent = '0%';
+        progressBar.className = 'progress-bar';
+        progressText.textContent = 'Initializing...';
     }
     
     /**
      * Update progress display
      */
     function updateProgress(message, percentage, className = null) {
-        if (progressBar) {
-            progressBar.style.width = `${percentage}%`;
-            progressBar.setAttribute('aria-valuenow', percentage);
-            
-            if (className) {
-                progressBar.className = `progress-bar ${className}`;
-            } else {
-                progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated';
-            }
-        }
-        if (progressText) {
-            progressText.textContent = message;
+        progressBar.style.width = `${percentage}%`;
+        progressBar.textContent = `${percentage}%`;
+        progressText.textContent = message;
+        
+        if (className) {
+            progressBar.className = `progress-bar bg-${className}`;
+        } else {
+            progressBar.className = 'progress-bar';
         }
     }
     
@@ -411,35 +489,35 @@ document.addEventListener('DOMContentLoaded', function() {
      * Update progress based on document status
      */
     function updateProgressFromStatus(status, statusData) {
-        switch (status) {
-            case 'pending':
-                updateProgress('Waiting to start processing...', 20);
-                break;
-            case 'processing':
-                // Calculate progress based on extraction_status if available
-                if (statusData.extraction_status) {
-                    const totalFields = Object.keys(statusData.extraction_status).length;
-                    if (totalFields > 0) {
-                        const completedFields = Object.values(statusData.extraction_status)
-                            .filter(s => s === 'completed').length;
-                        const percent = 30 + Math.floor((completedFields / totalFields) * 60);
-                        updateProgress(`Processing document (${completedFields}/${totalFields} fields completed)`, percent);
-                    } else {
-                        updateProgress('Processing document...', 50);
+        let progressPercent = 30; // Default starting progress
+        
+        if (status === 'pending') {
+            updateProgress('Document pending extraction...', 30);
+        } else if (status === 'processing') {
+            // Calculate progress based on extraction status if available
+            if (statusData.extraction_status) {
+                const totalFields = Object.keys(statusData.extraction_status).length || 1;
+                let completedFields = 0;
+                
+                // Count completed fields
+                for (const field in statusData.extraction_status) {
+                    if (statusData.extraction_status[field] === 'completed') {
+                        completedFields++;
                     }
-                } else {
-                    updateProgress('Processing document...', 50);
                 }
-                break;
-            case 'completed':
-                updateProgress('Document processing completed', 100, 'bg-success');
-                break;
-            case 'failed':
-                updateProgress('Document processing failed', 100, 'bg-danger');
-                break;
-            default:
-                updateProgress('Unknown status', 50);
-                break;
+                
+                // Calculate progress percentage
+                const fieldProgress = totalFields > 0 ? (completedFields / totalFields) : 0;
+                progressPercent = 30 + Math.round(fieldProgress * 50); // Scale between 30-80%
+            } else {
+                progressPercent = 40; // Generic progress if no field status
+            }
+            
+            updateProgress(`Processing document... (${progressPercent}%)`, progressPercent);
+        } else if (status === 'completed') {
+            updateProgress('Fetching results...', 90);
+        } else if (status === 'failed') {
+            updateProgress(`Extraction failed: ${statusData.error || 'Unknown error'}`, 0, 'danger');
         }
     }
     
@@ -447,34 +525,29 @@ document.addEventListener('DOMContentLoaded', function() {
      * Show an alert message that fades after a few seconds
      */
     function showAlert(type, message) {
-        // Create alert container if it doesn't exist
-        let alertContainer = document.getElementById('alert-container');
-        if (!alertContainer) {
-            alertContainer = document.createElement('div');
-            alertContainer.id = 'alert-container';
-            alertContainer.className = 'alert-container position-fixed top-0 start-50 translate-middle-x p-3';
-            alertContainer.style.zIndex = '1050';
-            document.body.appendChild(alertContainer);
-        }
+        const alertsContainer = document.getElementById('alerts-container');
         
-        // Create alert
-        const alertId = 'alert-' + Date.now();
-        const alertHtml = `
-            <div id="${alertId}" class="alert alert-${type} alert-dismissible fade show" role="alert">
-                ${message}
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            </div>
+        // Create alert element
+        const alertElement = document.createElement('div');
+        alertElement.className = `alert alert-${type} alert-dismissible fade show`;
+        alertElement.role = 'alert';
+        alertElement.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         `;
         
-        // Add alert to container
-        alertContainer.insertAdjacentHTML('beforeend', alertHtml);
+        // Add the alert to the container
+        alertsContainer.appendChild(alertElement);
         
-        // Auto-dismiss after 5 seconds
+        // Initialize the alert with bootstrap
+        const bsAlert = new bootstrap.Alert(alertElement);
+        
+        // Set timeout to auto-dismiss after 5 seconds
         setTimeout(() => {
-            const alert = document.getElementById(alertId);
-            if (alert) {
-                const bsAlert = new bootstrap.Alert(alert);
+            try {
                 bsAlert.close();
+            } catch (e) {
+                alertElement.remove();
             }
         }, 5000);
     }
@@ -483,255 +556,121 @@ document.addEventListener('DOMContentLoaded', function() {
      * Syntax highlight JSON for display
      */
     function syntaxHighlight(json) {
-        if (!json) return '';
-        
         json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
-            let cls = 'json-number';
+        return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function(match) {
+            let cls = 'number';
             if (/^"/.test(match)) {
                 if (/:$/.test(match)) {
-                    cls = 'json-key';
+                    cls = 'key';
                 } else {
-                    cls = 'json-string';
+                    cls = 'string';
                 }
             } else if (/true|false/.test(match)) {
-                cls = 'json-boolean';
+                cls = 'boolean';
             } else if (/null/.test(match)) {
-                cls = 'json-null';
+                cls = 'null';
             }
             return '<span class="' + cls + '">' + match + '</span>';
         });
     }
     
     // Field builder functionality
-    if (addFieldBtn) {
-        addFieldBtn.addEventListener('click', function() {
-            addField();
-            updateFieldDisplay();
-        });
-    }
-    
     function addField(name = '', description = '') {
-        const fieldId = `field-${fieldCount++}`;
-        const fieldHtml = `
-            <div class="field-item card mb-2" id="${fieldId}">
-                <div class="card-body p-3">
-                    <div class="row g-2">
-                        <div class="col-md-5">
-                            <label class="form-label" for="${fieldId}-name">Field Name</label>
-                            <input type="text" class="form-control field-name" id="${fieldId}-name" value="${name}" placeholder="e.g. total_amount">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label" for="${fieldId}-desc">Description</label>
-                            <input type="text" class="form-control field-desc" id="${fieldId}-desc" value="${description}" placeholder="e.g. The total invoice amount">
-                        </div>
-                        <div class="col-md-1 d-flex align-items-end">
-                            <button type="button" class="btn btn-outline-danger remove-field-btn" data-field-id="${fieldId}">
-                                <i class="fas fa-times"></i>
-                            </button>
-                        </div>
-                    </div>
+        fieldCount++;
+        
+        const fieldId = `field-${fieldCount}`;
+        const fieldRow = document.createElement('div');
+        fieldRow.className = 'field-row mb-3';
+        fieldRow.dataset.fieldId = fieldId;
+        
+        fieldRow.innerHTML = `
+            <div class="row">
+                <div class="col-md-5">
+                    <input type="text" class="form-control field-name" placeholder="Field name" value="${name}">
+                </div>
+                <div class="col-md-6">
+                    <input type="text" class="form-control field-description" placeholder="Description (optional)" value="${description}">
+                </div>
+                <div class="col-md-1">
+                    <button type="button" class="btn btn-danger btn-sm delete-field" aria-label="Delete field">×</button>
                 </div>
             </div>
         `;
         
-        fieldsContainer.insertAdjacentHTML('beforeend', fieldHtml);
-        
-        // Add event listener to the remove button
-        const removeBtn = fieldsContainer.querySelector(`#${fieldId} .remove-field-btn`);
-        removeBtn.addEventListener('click', function() {
-            const fieldId = this.getAttribute('data-field-id');
-            const fieldElement = document.getElementById(fieldId);
-            if (fieldElement) {
-                fieldElement.remove();
-                updateFieldDisplay();
-            }
+        // Add delete button functionality
+        const deleteBtn = fieldRow.querySelector('.delete-field');
+        deleteBtn.addEventListener('click', function() {
+            fieldRow.remove();
+            updateFieldDisplay();
+            updateSchemaFromFields();
         });
         
         // Add input change listeners
-        const nameInput = fieldsContainer.querySelector(`#${fieldId}-name`);
-        const descInput = fieldsContainer.querySelector(`#${fieldId}-desc`);
+        const nameInput = fieldRow.querySelector('.field-name');
+        const descInput = fieldRow.querySelector('.field-description');
         
         nameInput.addEventListener('input', updateSchemaFromFields);
         descInput.addEventListener('input', updateSchemaFromFields);
         
-        return fieldId;
+        // Add to container
+        fieldsContainer.appendChild(fieldRow);
     }
     
     function updateFieldDisplay() {
-        const hasFields = fieldsContainer.querySelectorAll('.field-item').length > 0;
-        
-        if (hasFields) {
-            noFieldsMessage.classList.add('d-none');
+        const fields = fieldsContainer.querySelectorAll('.field-row');
+        if (fields.length === 0) {
+            noFieldsMessage.style.display = 'block';
         } else {
-            noFieldsMessage.classList.remove('d-none');
+            noFieldsMessage.style.display = 'none';
         }
-        
-        updateSchemaFromFields();
     }
     
     function updateSchemaFromFields() {
-        const fields = [];
+        const fields = fieldsContainer.querySelectorAll('.field-row');
+        const schema = {
+            fields: []
+        };
         
-        fieldsContainer.querySelectorAll('.field-item').forEach(field => {
+        fields.forEach(field => {
             const nameInput = field.querySelector('.field-name');
-            const descInput = field.querySelector('.field-desc');
+            const descInput = field.querySelector('.field-description');
             
             if (nameInput.value.trim()) {
-                fields.push({
+                schema.fields.push({
                     name: nameInput.value.trim(),
                     description: descInput.value.trim()
                 });
             }
         });
         
-        const schema = {
-            fields: fields
-        };
-        
         schemaInput.value = JSON.stringify(schema, null, 2);
     }
     
     function updateFieldsFromSchema() {
+        // Clear existing fields
+        fieldsContainer.innerHTML = '';
+        fieldCount = 0;
+        
+        // Try to parse the schema
         try {
-            if (!schemaInput.value.trim()) {
-                // Clear fields if schema is empty
-                fieldsContainer.innerHTML = '';
-                updateFieldDisplay();
-                return;
+            if (schemaInput.value.trim()) {
+                const schema = JSON.parse(schemaInput.value);
+                
+                if (schema && schema.fields && Array.isArray(schema.fields)) {
+                    schema.fields.forEach(field => {
+                        if (field.name) {
+                            addField(field.name, field.description || '');
+                        }
+                    });
+                }
             }
-            
-            const schema = JSON.parse(schemaInput.value);
-            
-            if (!schema.fields || !Array.isArray(schema.fields)) {
-                return;
-            }
-            
-            // Clear existing fields
-            fieldsContainer.innerHTML = '';
-            
-            // Add fields from schema
-            schema.fields.forEach(field => {
-                addField(field.name || '', field.description || '');
-            });
-            
-            updateFieldDisplay();
         } catch (e) {
-            console.error('Error parsing schema JSON:', e);
+            console.error('Error parsing schema:', e);
+            showAlert('danger', 'Invalid schema format: ' + e.message);
         }
-    }
-    
-    // Toggle between JSON and field builder
-    if (toggleJsonViewBtn) {
-        toggleJsonViewBtn.addEventListener('click', function() {
-            const isJsonView = !jsonSchemaContainer.classList.contains('d-none');
-            
-            if (isJsonView) {
-                // Switch to field builder view
-                jsonSchemaContainer.classList.add('d-none');
-                fieldsBuilder.classList.remove('d-none');
-                toggleJsonViewBtn.textContent = 'Edit as JSON';
-                
-                // Update fields from JSON
-                updateFieldsFromSchema();
-            } else {
-                // Switch to JSON view
-                jsonSchemaContainer.classList.remove('d-none');
-                fieldsBuilder.classList.add('d-none');
-                toggleJsonViewBtn.textContent = 'Visual Editor';
-                
-                // Update JSON from fields
-                updateSchemaFromFields();
-            }
-        });
-    }
-    
-    // Table extraction form
-    if (tablesForm) {
-        tablesForm.addEventListener('submit', function(event) {
-            event.preventDefault();
-            
-            // Validate file selection
-            if (!tablesFileInput.files || tablesFileInput.files.length === 0) {
-                showAlert('danger', 'Please select a PDF file to extract tables from');
-                return;
-            }
-            
-            // Start loading state
-            startTablesLoading();
-            
-            // Prepare form data
-            const formData = new FormData();
-            formData.append('file', tablesFileInput.files[0]);
-            
-            // Send request
-            fetch('/api/extract-tables', {
-                method: 'POST',
-                body: formData
-            })
-            .then(handleResponse)
-            .then(data => {
-                // Display results
-                displayTablesResults(data);
-                
-                // Enable copy button
-                copyTablesJsonBtn.disabled = false;
-                
-                if (data.success) {
-                    showAlert('success', 'Tables extracted successfully');
-                } else {
-                    showAlert('warning', data.error || 'No tables could be extracted from the document');
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                showAlert('danger', 'Error: ' + error.message);
-                
-                // Reset display
-                tablesResultsContainer.innerHTML = `
-                    <div class="alert alert-danger">
-                        <h4 class="alert-heading">Extraction Failed</h4>
-                        <p>${error.message}</p>
-                    </div>
-                `;
-            })
-            .finally(() => {
-                stopTablesLoading();
-            });
-        });
-    }
-    
-    // Copy tables JSON button
-    if (copyTablesJsonBtn) {
-        copyTablesJsonBtn.addEventListener('click', function() {
-            // Get current table selector value
-            const tableId = tableSelector.value;
-            const tableData = window.extractedTables ? window.extractedTables[tableId] : null;
-            
-            if (!tableData && !window.extractedTables) {
-                showAlert('warning', 'No table data available to copy');
-                return;
-            }
-            
-            // Copy either the selected table or all tables
-            const jsonStr = tableData ? 
-                JSON.stringify(tableData, null, 2) : 
-                JSON.stringify(window.extractedTables, null, 2);
-            
-            navigator.clipboard.writeText(jsonStr).then(
-                function() {
-                    showAlert('info', 'Table data copied to clipboard');
-                    // Visual feedback
-                    copyTablesJsonBtn.innerText = 'Copied!';
-                    setTimeout(() => {
-                        copyTablesJsonBtn.innerText = 'Copy JSON';
-                    }, 2000);
-                },
-                function() {
-                    showAlert('danger', 'Failed to copy to clipboard');
-                }
-            );
-        });
+        
+        // Update the field display
+        updateFieldDisplay();
     }
     
     /**
@@ -740,138 +679,174 @@ document.addEventListener('DOMContentLoaded', function() {
     function displayTablesResults(data) {
         // Clear previous results
         tablesResultsContainer.innerHTML = '';
-        tableSelector.innerHTML = '<option selected disabled>Select a table to view</option>';
-        tableSelector.classList.add('d-none');
         
-        if (data.success && data.tables && data.tables.length > 0) {
-            // Store tables in global variable for copy functionality
-            window.extractedTables = {};
-            data.tables.forEach((table, index) => {
-                window.extractedTables[`table-${index}`] = table;
-                
-                // Add option to table selector
-                tableSelector.insertAdjacentHTML('beforeend', `
-                    <option value="table-${index}">Table ${index + 1}</option>
-                `);
+        // Format JSON output
+        const jsonOutput = document.createElement('pre');
+        jsonOutput.id = 'tables-json-output';
+        jsonOutput.className = 'json-output mt-3';
+        jsonOutput.textContent = JSON.stringify(data, null, 2);
+        
+        // Create table selector if multiple tables were found
+        const tables = data.tables || [];
+        const tableCount = tables.length;
+        const tableInfo = document.createElement('div');
+        tableInfo.className = 'alert alert-info';
+        
+        if (tableCount > 0) {
+            tableInfo.textContent = `Found ${tableCount} tables in the document`;
+            
+            // Create table selector
+            const selectorContainer = document.createElement('div');
+            selectorContainer.className = 'form-group mb-3';
+            
+            const label = document.createElement('label');
+            label.htmlFor = 'table-select';
+            label.className = 'form-label';
+            label.textContent = 'Select a table to view:';
+            
+            const select = document.createElement('select');
+            select.id = 'table-select';
+            select.className = 'form-select';
+            
+            tables.forEach((table, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                option.textContent = table.table_title || `Table ${index + 1}`;
+                select.appendChild(option);
             });
             
-            // Show table selector if more than one table
-            if (data.tables.length > 1) {
-                tableSelector.classList.remove('d-none');
-                tableSelector.addEventListener('change', function() {
-                    const tableId = this.value;
-                    displayTableDetails(window.extractedTables[tableId]);
-                });
-                
-                // Display overview
-                tablesResultsContainer.innerHTML = `
-                    <div class="alert alert-info">
-                        <h5>${data.tables.length} tables found in document</h5>
-                        <p>Select a table from the dropdown to view details</p>
-                    </div>
-                `;
-            } else {
-                // Display the single table
-                displayTableDetails(data.tables[0]);
+            selectorContainer.appendChild(label);
+            selectorContainer.appendChild(select);
+            
+            // Create table display area
+            const tableDisplay = document.createElement('div');
+            tableDisplay.id = 'table-display';
+            tableDisplay.className = 'table-responsive';
+            
+            // Add event listener to selector
+            select.addEventListener('change', function() {
+                const selectedTable = tables[this.value];
+                displayTableDetails(selectedTable);
+            });
+            
+            // Display the first table initially
+            if (tables.length > 0) {
+                displayTableDetails(tables[0]);
             }
+            
+            // Add elements to the page
+            tablesResultsContainer.appendChild(tableInfo);
+            tablesResultsContainer.appendChild(selectorContainer);
+            tablesResultsContainer.appendChild(tableDisplay);
+            tablesResultsContainer.appendChild(jsonOutput);
         } else {
-            // No tables found or error
-            tablesResultsContainer.innerHTML = `
-                <div class="alert alert-warning">
-                    <h4 class="alert-heading">No Tables Found</h4>
-                    <p>${data.error || 'No tables could be extracted from the document'}</p>
-                </div>
-            `;
+            tableInfo.textContent = 'No tables found in the document';
+            tableInfo.className = 'alert alert-warning';
+            
+            tablesResultsContainer.appendChild(tableInfo);
+            tablesResultsContainer.appendChild(jsonOutput);
         }
+        
+        // Show the container
+        tablesResultsContainer.style.display = 'block';
     }
     
     /**
      * Display details of a specific table
      */
     function displayTableDetails(tableData) {
-        if (!tableData) return;
+        const tableDisplay = document.getElementById('table-display');
+        if (!tableDisplay) return;
         
+        // Clear previous table display
+        tableDisplay.innerHTML = '';
+        
+        // Add table title
+        const titleElement = document.createElement('h4');
+        titleElement.textContent = tableData.table_title || 'Table';
+        titleElement.className = 'mt-3 mb-2';
+        
+        // Render the table as HTML
         const tableHtml = renderTableHtml(tableData);
         
-        tablesResultsContainer.innerHTML = `
-            <div class="card mb-3">
-                <div class="card-header">
-                    <h5 class="card-title mb-0">Table Preview</h5>
-                </div>
-                <div class="card-body table-responsive">
-                    ${tableHtml}
-                </div>
-            </div>
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="card-title mb-0">Table Data (JSON)</h5>
-                </div>
-                <div class="card-body">
-                    <pre class="json-display">${syntaxHighlight(JSON.stringify(tableData, null, 2))}</pre>
-                </div>
-            </div>
-        `;
+        // Add to display
+        tableDisplay.appendChild(titleElement);
+        tableDisplay.appendChild(tableHtml);
     }
     
     /**
      * Render HTML for a table
      */
     function renderTableHtml(tableData) {
-        if (!tableData || !tableData.data || !tableData.data.length) {
-            return '<div class="alert alert-warning">No data available for this table</div>';
-        }
+        // Create table element
+        const table = document.createElement('table');
+        table.className = 'table table-striped table-bordered';
         
+        // Create table header
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        
+        // Add headers
         const headers = tableData.headers || [];
-        const rows = tableData.data;
-        
-        let tableHtml = '<table class="table table-bordered table-striped">';
-        
-        // Add headers if available
-        if (headers.length > 0) {
-            tableHtml += '<thead><tr>';
-            headers.forEach(header => {
-                tableHtml += `<th>${header}</th>`;
-            });
-            tableHtml += '</tr></thead>';
-        }
-        
-        // Add body
-        tableHtml += '<tbody>';
-        rows.forEach(row => {
-            tableHtml += '<tr>';
-            if (Array.isArray(row)) {
-                row.forEach(cell => {
-                    tableHtml += `<td>${cell}</td>`;
-                });
-            } else {
-                // Handle non-array rows (shouldn't happen with proper data)
-                tableHtml += `<td>${JSON.stringify(row)}</td>`;
-            }
-            tableHtml += '</tr>';
+        headers.forEach(header => {
+            const th = document.createElement('th');
+            th.textContent = header;
+            headerRow.appendChild(th);
         });
-        tableHtml += '</tbody></table>';
         
-        return tableHtml;
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+        
+        // Create table body
+        const tbody = document.createElement('tbody');
+        
+        // Add rows
+        const rows = tableData.data || [];
+        rows.forEach(row => {
+            const tr = document.createElement('tr');
+            
+            // Add cells
+            row.forEach(cell => {
+                const td = document.createElement('td');
+                td.textContent = cell;
+                tr.appendChild(td);
+            });
+            
+            tbody.appendChild(tr);
+        });
+        
+        table.appendChild(tbody);
+        
+        return table;
     }
     
     /**
      * Start loading state for table extraction
      */
     function startTablesLoading() {
+        tablesLoadingSpinner.style.display = 'block';
         extractTablesBtn.disabled = true;
-        tablesLoadingSpinner.classList.remove('d-none');
     }
     
     /**
      * Stop loading state for table extraction
      */
     function stopTablesLoading() {
+        tablesLoadingSpinner.style.display = 'none';
         extractTablesBtn.disabled = false;
-        tablesLoadingSpinner.classList.add('d-none');
     }
     
-    // Add initial field if no fields are defined
-    if (fieldsContainer && fieldsContainer.children.length === 0) {
-        updateFieldDisplay();
-    }
+    // Add event listeners to field name inputs to update schema in real-time
+    document.addEventListener('input', function(event) {
+        if (event.target.classList.contains('field-name') || 
+            event.target.classList.contains('field-description')) {
+            updateSchemaFromFields();
+        }
+    });
+    
+    // Initialize field builder display
+    updateFieldDisplay();
+    
+    // Set JSON container to initially hidden
+    jsonSchemaContainer.style.display = 'none';
 });

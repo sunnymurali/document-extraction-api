@@ -81,16 +81,28 @@ def upload_document():
     
     # Check file type
     if not allowed_file(file.filename):
+        logger.warning(f"Invalid file type attempted: {file.filename}")
         return jsonify({'success': False, 'error': f'Invalid file type. Allowed types: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
     
     try:
         # Read file content
         file_content = file.read()
         
+        # Validate file content is not empty
+        if not file_content:
+            logger.warning(f"Empty file content: {file.filename}")
+            return jsonify({'success': False, 'error': 'File content is empty'}), 400
+            
+        # For PDF files, try basic validation that it's a real PDF
+        if file.filename.lower().endswith('.pdf') and not file_content.startswith(b'%PDF-'):
+            logger.warning(f"Invalid PDF header: {file.filename}")
+            return jsonify({'success': False, 'error': 'The file does not appear to be a valid PDF'}), 400
+        
         # Store document
         result = store_document(file.filename, file_content)
         
         if not result.success:
+            logger.error(f"Failed to store document: {result.error}")
             return jsonify({
                 'success': False, 
                 'error': result.error or 'Failed to store document'
