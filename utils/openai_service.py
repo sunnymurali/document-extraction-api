@@ -75,8 +75,9 @@ Extract the following common fields (if present):
     human_message = HumanMessage(content=text)
     
     try:
-        # Get OpenAI client with appropriate settings (will try Azure first, then fallback to standard OpenAI)
-        client = get_chat_openai(temperature=0.1, max_tokens=1000)
+        # Get OpenAI client with appropriate settings (will use standard OpenAI with fallback to Azure)
+        # Reduced max_tokens to help with memory issues
+        client = get_chat_openai(temperature=0.1, max_tokens=500)
         
         logger.info("Successfully created OpenAI client, attempting to invoke...")
         

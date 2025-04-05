@@ -20,7 +20,8 @@ from utils.azure_openai_config import get_chat_openai
 from utils.document_chunking import (
     split_text_into_chunks,
     merge_extraction_results,
-    process_chunks_with_progress
+    process_chunks_with_progress,
+    MAX_CHUNKS_TO_PROCESS
 )
 
 # Configure logging
@@ -180,13 +181,9 @@ def extract_document_data(file_path: str, schema: Optional[Dict[str, Any]] = Non
             logger.info(f"Document is large ({len(text)} characters), using chunking strategy")
             
             # Split the text into chunks
+            # The split_text_into_chunks function already applies a limit of MAX_CHUNKS_TO_PROCESS (5)
             chunks = split_text_into_chunks(text)
-            logger.info(f"Split document into {len(chunks)} chunks")
-            
-            # Limit number of chunks to 5 to prevent memory issues/timeouts
-            if len(chunks) > 5:
-                logger.warning(f"Limiting chunks from {len(chunks)} to 5 to prevent memory issues")
-                chunks = chunks[:5]
+            logger.info(f"Split document into {len(chunks)} chunks (max: {MAX_CHUNKS_TO_PROCESS} from document_chunking)")
             
             # Define a function to extract data from a single chunk
             def extract_from_chunk(chunk_text, schema):

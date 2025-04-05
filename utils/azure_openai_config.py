@@ -31,20 +31,38 @@ OPENAI_MODEL = "gpt-4o"
 
 def get_chat_openai(temperature: float = 0.1, max_tokens: int = 1000) -> BaseChatModel:
     """
-    Creates an instance of a chat model client with the specified parameters,
-    preferring Azure OpenAI but falling back to standard OpenAI if Azure is unavailable.
+    Creates an instance of a chat model client with the specified parameters.
+    Now prioritizing standard OpenAI because our tests show Azure OpenAI has connection issues.
     
     Args:
         temperature: Controls randomness. Lower values like 0.1 make output more focused and deterministic.
         max_tokens: Maximum number of tokens to generate in the completion.
         
     Returns:
-        BaseChatModel: A configured chat model client instance (either Azure or standard OpenAI).
+        BaseChatModel: A configured chat model client instance (either standard OpenAI or Azure).
         
     Raises:
-        Exception: If neither Azure OpenAI nor standard OpenAI can be configured.
+        Exception: If neither standard OpenAI nor Azure OpenAI can be configured.
     """
-    # First try to use Azure OpenAI
+    # First try standard OpenAI since our tests show it's working
+    if OPENAI_API_KEY:
+        try:
+            logger.info(f"Configuring standard OpenAI client with model: {OPENAI_MODEL}")
+            openai_client = ChatOpenAI(
+                model=OPENAI_MODEL,
+                api_key=OPENAI_API_KEY,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            logger.info("Successfully created standard OpenAI client")
+            return openai_client
+        except Exception as e:
+            logger.error(f"Failed to configure standard OpenAI: {str(e)}")
+            logger.info("Trying Azure OpenAI as fallback")
+    else:
+        logger.warning("OpenAI API key not provided, will try Azure OpenAI")
+    
+    # Try Azure OpenAI as fallback
     if AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT_NAME:
         try:
             logger.info(f"Configuring Azure OpenAI client with endpoint: {AZURE_OPENAI_ENDPOINT}, deployment: {AZURE_OPENAI_DEPLOYMENT_NAME}, API version: {AZURE_OPENAI_API_VERSION}")
@@ -60,7 +78,6 @@ def get_chat_openai(temperature: float = 0.1, max_tokens: int = 1000) -> BaseCha
             return azure_client
         except Exception as e:
             logger.warning(f"Failed to configure Azure OpenAI: {str(e)}")
-            logger.info("Falling back to standard OpenAI")
     else:
         logger.info("Azure OpenAI credentials not fully configured")
         missing = []
@@ -72,25 +89,8 @@ def get_chat_openai(temperature: float = 0.1, max_tokens: int = 1000) -> BaseCha
             missing.append("AZURE_OPENAI_DEPLOYMENT_NAME")
         logger.info(f"Missing Azure OpenAI credentials: {', '.join(missing)}")
         
-    # Fallback to standard OpenAI
-    if OPENAI_API_KEY:
-        try:
-            logger.info(f"Configuring standard OpenAI client with model: {OPENAI_MODEL}")
-            openai_client = ChatOpenAI(
-                model=OPENAI_MODEL,
-                api_key=OPENAI_API_KEY,
-                temperature=temperature,
-                max_tokens=max_tokens
-            )
-            logger.info("Successfully created standard OpenAI client")
-            return openai_client
-        except Exception as e:
-            logger.error(f"Failed to configure standard OpenAI: {str(e)}")
-    else:
-        logger.warning("OpenAI API key not provided for fallback")
-    
     # If we get here, neither client could be configured
-    raise Exception("Failed to configure either Azure OpenAI or standard OpenAI. Please check your API credentials.")
+    raise Exception("Failed to configure either standard OpenAI or Azure OpenAI. Please check your API credentials.")
 
 # For backward compatibility
 def get_azure_chat_openai(temperature: float = 0.1, max_tokens: int = 1000) -> BaseChatModel:

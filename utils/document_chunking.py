@@ -13,10 +13,10 @@ import json
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Constants for chunking
-DEFAULT_CHUNK_SIZE = 4000
-DEFAULT_CHUNK_OVERLAP = 500
-MAX_CHUNKS_TO_PROCESS = 20  # Safety limit to prevent excessive API calls
+# Constants for chunking - reduced for memory constraints
+DEFAULT_CHUNK_SIZE = 2000   # Reduced from 4000 to help with memory issues
+DEFAULT_CHUNK_OVERLAP = 200 # Reduced from 500
+MAX_CHUNKS_TO_PROCESS = 5   # Safety limit to prevent excessive API calls/memory issues
 
 def split_text_into_chunks(text: str, chunk_size: int = DEFAULT_CHUNK_SIZE, 
                           chunk_overlap: int = DEFAULT_CHUNK_OVERLAP) -> List[str]:
