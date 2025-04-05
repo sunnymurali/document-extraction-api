@@ -49,44 +49,37 @@
                                     </div>
                                     
                                     <div class="mb-3">
-                                        <div class="form-check form-switch">
-                                            <input class="form-check-input" type="checkbox" id="use-chunking" name="use_chunking" checked>
-                                            <label class="form-check-label" for="use-chunking">Enable document chunking</label>
-                                        </div>
-                                        <div class="form-text">Divides large documents into smaller pieces for better processing. Recommended for documents over 10 pages.</div>
-                                    </div>
-                                    
-                                    <div class="mb-3">
                                         <div class="d-flex justify-content-between align-items-center mb-2">
-                                            <label class="form-label mb-0">Fields to Extract</label>
-                                            <div>
-                                                <button type="button" class="btn btn-sm btn-outline-secondary" id="toggle-json-view">
-                                                    <span class="json-view-text">Show JSON</span>
-                                                </button>
-                                                <button type="button" class="btn btn-sm btn-outline-primary ms-2" id="add-field-btn">
-                                                    <i class="fas fa-plus"></i> Add Field
-                                                </button>
-                                            </div>
+                                            <label for="extraction-schema" class="form-label">Extraction Schema (Optional)</label>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary" id="toggle-json-view">Edit as JSON</button>
                                         </div>
                                         
-                                        <!-- User-friendly field builder interface -->
-                                        <div id="fields-builder" class="mb-3">
-                                            <div class="alert alert-info mb-3">
-                                                <small>Add fields you want to extract from the document. Each field needs a name and optional description.</small>
-                                            </div>
+                                        <!-- JSON Schema Editor -->
+                                        <div id="json-schema-container" class="d-none">
+                                            <textarea class="form-control code-editor" id="extraction-schema" name="extraction_schema" rows="8" placeholder='{"fields": [{"name": "field_name", "description": "Field description"}]}'></textarea>
+                                            <div class="form-text">Define the fields to extract in JSON format</div>
+                                        </div>
+                                        
+                                        <!-- Visual Field Builder -->
+                                        <div id="fields-builder">
                                             <div id="fields-container">
                                                 <!-- Fields will be added here dynamically -->
-                                                <div class="text-center text-muted py-4" id="no-fields-message">
-                                                    <p>No fields added yet. Click "Add Field" to start.</p>
-                                                </div>
                                             </div>
+                                            
+                                            <div id="no-fields-message" class="alert alert-info">
+                                                <p class="mb-0">No extraction fields defined. Add fields to specify what data to extract from your document.</p>
+                                            </div>
+                                            
+                                            <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="add-field-btn">
+                                                <i class="fas fa-plus"></i> Add Field
+                                            </button>
                                         </div>
-                                        
-                                        <!-- Hidden JSON schema textarea -->
-                                        <div id="json-schema-container" class="d-none">
-                                            <textarea class="form-control" id="extraction-schema" name="extraction_schema" rows="8" placeholder='{"fields": [{"name": "invoice_number", "description": "The invoice identification number"}, {"name": "date", "description": "The invoice date"}]}'></textarea>
-                                            <div class="form-text">Schema in JSON format (advanced)</div>
-                                        </div>
+                                    </div>
+                                    
+                                    <div class="form-check mb-3">
+                                        <input class="form-check-input" type="checkbox" id="use-chunking" name="use_chunking" checked>
+                                        <label class="form-check-label" for="use-chunking">Enable document chunking</label>
+                                        <div class="form-text">Helps process large documents by breaking them into smaller chunks.</div>
                                     </div>
                                     
                                     <div class="d-grid">
@@ -95,53 +88,34 @@
                                             Extract Data
                                         </button>
                                     </div>
+                                    
+                                    <!-- Progress tracking (initially hidden) -->
+                                    <div id="progress-container" class="progress-container mt-3 mb-4 d-none">
+                                        <div class="progress">
+                                            <div id="extraction-progress" class="progress-bar progress-bar-striped progress-bar-animated" 
+                                                role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0%"></div>
+                                        </div>
+                                        <div id="progress-text" class="text-center mt-2">Starting...</div>
+                                    </div>
                                 </form>
                             </div>
                         </div>
-                        
-                        <div class="card mb-4">
-                            <div class="card-header">
-                                <h2 class="card-title h5 mb-0">Extraction Guide</h2>
-                            </div>
-                            <div class="card-body">
-                                <p>This tool extracts structured data from documents using AI. It works best with:</p>
-                                <ul>
-                                    <li>Invoices and receipts</li>
-                                    <li>Business documents</li>
-                                    <li>Forms and applications</li>
-                                    <li>Contracts and agreements</li>
-                                </ul>
-                                <p><strong>Schema Format Example:</strong></p>
-                                <pre class="p-2 rounded"><code>{
-  "fields": [
-    {
-      "name": "invoice_number",
-      "description": "The invoice identification number"
-    },
-    {
-      "name": "date",
-      "description": "The invoice date"
-    },
-    {
-      "name": "total_amount",
-      "description": "The total amount due"
-    }
-  ]
-}</code></pre>
-                                <p>Without a schema, the system will extract common fields automatically.</p>
-                                <p><strong>Document Chunking:</strong></p>
-                                <p class="mb-0">For large documents, the system divides them into smaller chunks for better processing. Toggle this feature off for simple documents if you need faster extraction.</p>
-                            </div>
-                        </div>
                     </div>
-                    
                     <div class="col-md-6">
-                        <div class="card">
+                        <div class="card mb-4">
                             <div class="card-header d-flex justify-content-between align-items-center">
                                 <h2 class="card-title h5 mb-0">Extraction Results</h2>
-                                <button class="btn btn-sm btn-outline-secondary" id="copy-json-btn" disabled>Copy JSON</button>
+                                <button id="copy-json-btn" class="btn btn-sm btn-outline-secondary" disabled>Copy JSON</button>
                             </div>
-                            <div class="card-body">
+                            <div class="card-body position-relative">
+                                <div id="loading-overlay" class="loading-overlay d-none">
+                                    <div class="spinner-container">
+                                        <div class="spinner-border text-primary" role="status">
+                                            <span class="visually-hidden">Loading...</span>
+                                        </div>
+                                        <p class="mt-2 text-primary">Processing Document...</p>
+                                    </div>
+                                </div>
                                 <div id="results-container">
                                     <div class="text-center py-5 text-secondary">
                                         <i class="fas fa-file-alt fa-3x mb-3"></i>
@@ -160,14 +134,14 @@
                     <div class="col-md-5">
                         <div class="card mb-4">
                             <div class="card-header">
-                                <h2 class="card-title h5 mb-0">Upload PDF with Tables</h2>
+                                <h2 class="card-title h5 mb-0">Upload PDF Document</h2>
                             </div>
                             <div class="card-body">
                                 <form id="tables-form" enctype="multipart/form-data">
                                     <div class="mb-3">
                                         <label for="tables-file" class="form-label">PDF Document</label>
                                         <input type="file" class="form-control" id="tables-file" name="file" accept=".pdf" required>
-                                        <div class="form-text">Only PDF files are supported for table extraction (Max 10MB)</div>
+                                        <div class="form-text">Only PDF files are supported for table extraction</div>
                                     </div>
                                     
                                     <div class="d-grid">
@@ -179,48 +153,22 @@
                                 </form>
                             </div>
                         </div>
-                        
-                        <div class="card mb-4">
-                            <div class="card-header">
-                                <h2 class="card-title h5 mb-0">Table Extraction Guide</h2>
-                            </div>
-                            <div class="card-body">
-                                <p>This tool extracts tables from PDF documents using AI.</p>
-                                <p><strong>Features:</strong></p>
-                                <ul>
-                                    <li>Identifies and extracts multiple tables from a PDF</li>
-                                    <li>Maintains row and column structure</li>
-                                    <li>Works with complex table layouts</li>
-                                    <li>Provides table titles when available</li>
-                                    <li>Reports page numbers for each table</li>
-                                </ul>
-                                <p><strong>Best Practices:</strong></p>
-                                <ul>
-                                    <li>Use PDFs with clearly defined tables</li>
-                                    <li>Tables should have distinct borders or spacing</li>
-                                    <li>Higher quality PDFs yield better results</li>
-                                </ul>
-                                <p class="mb-0 text-info">Processing can take a minute or more depending on the number of pages and tables.</p>
-                            </div>
-                        </div>
                     </div>
-                    
                     <div class="col-md-7">
-                        <div class="card">
+                        <div class="card mb-4">
                             <div class="card-header d-flex justify-content-between align-items-center">
                                 <h2 class="card-title h5 mb-0">Extracted Tables</h2>
-                                <div>
-                                    <select id="table-selector" class="form-select form-select-sm d-none">
-                                        <option value="">Select a table...</option>
-                                    </select>
-                                    <button class="btn btn-sm btn-outline-secondary ms-2" id="copy-tables-json-btn" disabled>Copy JSON</button>
-                                </div>
+                                <button id="copy-tables-json-btn" class="btn btn-sm btn-outline-secondary" disabled>Copy JSON</button>
                             </div>
                             <div class="card-body">
+                                <select class="form-select mb-3 d-none" id="table-selector">
+                                    <option selected disabled>Select a table to view</option>
+                                </select>
+                                
                                 <div id="tables-results-container">
                                     <div class="text-center py-5 text-secondary">
                                         <i class="fas fa-table fa-3x mb-3"></i>
-                                        <p>Upload a PDF document to see extracted tables</p>
+                                        <p>Upload a PDF document to extract tables</p>
                                     </div>
                                 </div>
                             </div>
@@ -229,29 +177,8 @@
                 </div>
             </div>
         </div>
-        
-        <div class="alert alert-info alert-dismissible fade show mt-4" role="alert">
-            <h4 class="alert-heading">How it works</h4>
-            <p>This tool uses OpenAI's powerful language models to extract structured data from documents. It can identify and parse information from virtually any document format.</p>
-            <p>For best results, use documents with clear, well-formatted text. The extraction quality depends on the document's clarity and structure.</p>
-            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-        </div>
     </div>
-
-    <!-- Loading overlay -->
-    <div id="loading-overlay" class="d-none">
-        <div class="spinner-border" role="status">
-            <span class="visually-hidden">Loading...</span>
-        </div>
-        <p class="mt-2">Processing document...</p>
-    </div>
-
-    <footer class="text-center py-3 mt-5">
-        <div class="container">
-            <p class="mb-0">Document Data Extractor &copy; 2025</p>
-        </div>
-    </footer>
-
+    
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/static/main.js"></script>
 </body>
