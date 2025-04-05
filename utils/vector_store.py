@@ -41,22 +41,54 @@ document_metadata = {}
 
 def get_embeddings():
     """Get OpenAI embeddings model with error handling"""
-    try:
-        # Try to use Azure OpenAI if configured
-        if os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"):
+    # Initialize with standard OpenAI embeddings first (more reliable)
+    if os.environ.get("OPENAI_API_KEY"):
+        try:
+            logger.info("Trying to initialize standard OpenAI embeddings")
+            model = "text-embedding-3-small"  # Latest embeddings model
+            embeddings = OpenAIEmbeddings(
+                model=model,
+                openai_api_key=os.environ.get("OPENAI_API_KEY")
+            )
+            # Test the embeddings with a simple query
+            logger.info("Testing OpenAI embeddings connection")
+            _ = embeddings.embed_query("test")
+            logger.info("Successfully initialized standard OpenAI embeddings")
+            return embeddings
+        except Exception as e:
+            logger.warning(f"Error initializing standard OpenAI embeddings: {str(e)}")
+            logger.info("Will try Azure OpenAI embeddings as fallback")
+    else:
+        logger.info("No OPENAI_API_KEY set, will try Azure OpenAI embeddings")
+    
+    # Try Azure OpenAI embeddings as fallback
+    if os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"):
+        try:
+            # Note: Azure OpenAI needs a specific deployment name for embeddings
+            # By default, use the same deployment name as the chat model
+            embeddings_deployment = os.environ.get("AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT") or os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
+            
+            logger.info(f"Initializing Azure OpenAI embeddings with deployment: {embeddings_deployment}")
             from langchain_openai import AzureOpenAIEmbeddings
-            return AzureOpenAIEmbeddings(
-                azure_deployment=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"),
+            
+            embeddings = AzureOpenAIEmbeddings(
+                azure_deployment=embeddings_deployment,
                 openai_api_version=os.environ.get("AZURE_OPENAI_API_VERSION"),
                 azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
-                api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
+                api_key=os.environ.get("AZURE_OPENAI_API_KEY")
             )
-        else:
-            # Fall back to standard OpenAI
-            return OpenAIEmbeddings()
-    except Exception as e:
-        logger.error(f"Error initializing embeddings: {str(e)}")
-        raise
+            
+            # Test the Azure embeddings
+            logger.info("Testing Azure OpenAI embeddings connection")
+            _ = embeddings.embed_query("test")
+            logger.info("Successfully initialized Azure OpenAI embeddings")
+            return embeddings
+        except Exception as e:
+            logger.error(f"Error initializing Azure OpenAI embeddings: {str(e)}")
+    
+    # If we get here, we couldn't initialize any embeddings service
+    logger.error("Failed to initialize any embeddings service")
+    raise Exception("Failed to initialize OpenAI or Azure OpenAI embeddings. Check your API keys and configuration.")
 
 
 def get_vector_store(collection_name):
