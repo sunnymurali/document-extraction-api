@@ -83,8 +83,34 @@ Extract the following common fields (if present):
         # Extract the response content
         response_content = response.content
         
-        # Parse and return the JSON response
-        return json.loads(response_content)
+        # Check if response looks like HTML (it might be an error page)
+        if response_content.strip().startswith('<'):
+            logger.error(f"Received HTML response instead of JSON: {response_content[:100]}...")
+            raise Exception("Received HTML error page instead of JSON response. This usually indicates an authentication or API configuration issue.")
+        
+        # Try to parse the JSON response
+        try:
+            # Remove any potential markdown code block syntax
+            cleaned_content = response_content
+            if "```json" in cleaned_content:
+                # Extract only the part between ```json and ```
+                parts = cleaned_content.split("```json")
+                if len(parts) > 1:
+                    json_parts = parts[1].split("```")
+                    if json_parts:
+                        cleaned_content = json_parts[0].strip()
+            elif "```" in cleaned_content:
+                # Extract only the part between ``` and ```
+                parts = cleaned_content.split("```")
+                if len(parts) > 1:
+                    cleaned_content = parts[1].strip()
+            
+            # Parse and return the JSON response
+            return json.loads(cleaned_content)
+        except json.JSONDecodeError as json_err:
+            logger.error(f"Failed to parse JSON from response: {json_err}")
+            logger.debug(f"Raw response content: {response_content}")
+            raise Exception(f"Failed to parse JSON from response: {json_err}. Response begins with: {response_content[:50]}...")
     
     except Exception as e:
         error_msg = f"Azure OpenAI connection failed: {str(e)}"

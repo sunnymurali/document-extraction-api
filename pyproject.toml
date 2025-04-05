@@ -19,6 +19,7 @@ pymupdf = "^1.25.5"
 langchain = "^0.3.23"
 langchain-openai = "^0.3.12"
 langchain-core = "^0.3.51"
+trafilatura = "^2.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0.0"

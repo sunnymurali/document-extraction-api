@@ -75,7 +75,19 @@ document.addEventListener('DOMContentLoaded', function() {
             method: 'POST',
             body: formData
         })
-        .then(response => response.json())
+        .then(response => {
+            // First check if the response is ok
+            if (!response.ok) {
+                // Check if response is HTML
+                if (response.headers.get('content-type')?.includes('text/html')) {
+                    return response.text().then(html => {
+                        throw new Error('Server returned HTML instead of JSON. This typically indicates a server error or authorization problem.');
+                    });
+                }
+                throw new Error(`Server responded with status: ${response.status}`);
+            }
+            return response.json();
+        })
         .then(data => {
             // Store the data for copy functionality
             extractedData = data;
@@ -95,7 +107,13 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .catch(error => {
             console.error('Error:', error);
-            showAlert('danger', 'Failed to process document: ' + error.message);
+            if (error.message.includes('Unexpected token')) {
+                showAlert('danger', 'Failed to parse server response. This usually indicates an API configuration issue with Azure OpenAI.');
+            } else if (error.message.includes('HTML instead of JSON')) {
+                showAlert('danger', 'Authentication error with Azure OpenAI. Please check your API credentials.');
+            } else {
+                showAlert('danger', 'Failed to process document: ' + error.message);
+            }
             
             // Reset results area
             resultsContainer.innerHTML = `
@@ -319,6 +337,12 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(response => {
             // Check if response is OK
             if (!response.ok) {
+                // Check if response is HTML
+                if (response.headers.get('content-type')?.includes('text/html')) {
+                    return response.text().then(html => {
+                        throw new Error('Server returned HTML instead of JSON. This typically indicates a server error or authorization problem.');
+                    });
+                }
                 throw new Error(`Server responded with status ${response.status}`);
             }
             
@@ -352,9 +376,13 @@ document.addEventListener('DOMContentLoaded', function() {
         .catch(error => {
             console.error('Error:', error);
             
-            // Show more user-friendly error message for timeout
+            // Show more user-friendly error message for common errors
             if (error.message.includes('timed out') || error.message.includes('not in JSON format')) {
                 showAlert('danger', 'The table extraction process timed out. Please try with a smaller PDF document or fewer pages.');
+            } else if (error.message.includes('Unexpected token')) {
+                showAlert('danger', 'Failed to parse server response. This usually indicates an API configuration issue with Azure OpenAI.');
+            } else if (error.message.includes('HTML instead of JSON')) {
+                showAlert('danger', 'Authentication error with Azure OpenAI. Please check your API credentials.');
             } else {
                 showAlert('danger', 'Failed to process document: ' + error.message);
             }

@@ -113,6 +113,11 @@ Return the data as a clean JSON object.
         # Extract the response content
         response_content = response.content
         
+        # Check if response looks like HTML (it might be an error page)
+        if response_content.strip().startswith('<'):
+            logger.error(f"Received HTML response instead of JSON: {response_content[:100]}...")
+            raise Exception("Received HTML error page instead of JSON response. This usually indicates an authentication or API configuration issue.")
+        
         # Try to parse the JSON response
         try:
             # Remove any potential markdown code block syntax
@@ -129,13 +134,18 @@ Return the data as a clean JSON object.
                 parts = cleaned_content.split("```")
                 if len(parts) > 1:
                     cleaned_content = parts[1].strip()
-                    
-            # Parse and return the JSON response
-            return json.loads(cleaned_content)
+            
+            logger.debug(f"Cleaned response content for JSON parsing: {cleaned_content[:100]}...")
+            
+            # Try to parse the JSON
+            parsed_data = json.loads(cleaned_content)
+            logger.info("Successfully parsed JSON response")
+            return parsed_data
         except json.JSONDecodeError as e:
             logger.error(f"Error parsing JSON from response: {e}")
             logger.debug(f"Raw response content: {response_content}")
-            raise Exception(f"Failed to parse JSON response from Azure OpenAI: {e}")
+            error_preview = response_content[:50] + "..." if len(response_content) > 50 else response_content
+            raise Exception(f"Failed to parse JSON response from Azure OpenAI: {e}. Response begins with: {error_preview}")
     
     except Exception as azure_error:
         # Log the Azure error and raise it without falling back to standard OpenAI
