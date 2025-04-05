@@ -188,36 +188,55 @@ def process_chunks_with_progress(chunks: List[str], extractor_func, schema: Opti
     
     for i, chunk in enumerate(chunks):
         logger.info(f"Processing chunk {i+1}/{total_chunks} ({len(chunk)} characters)")
+        logger.info(f"Chunk {i+1} preview: {chunk[:100]}...")
         
         # Extract data from this chunk
         try:
+            logger.info(f"Calling extraction function for chunk {i+1}")
             chunk_result = extractor_func(chunk, schema)
+            
+            # Log fields extracted
+            field_count = len(chunk_result) if chunk_result else 0
+            field_names = list(chunk_result.keys()) if chunk_result else []
+            logger.info(f"Chunk {i+1} processed successfully with {field_count} fields: {field_names}")
             
             # Add to results
             if chunk_result:
                 results.append(chunk_result)
+            else:
+                logger.warning(f"Chunk {i+1} returned empty result")
+                results.append({})  # Add empty dict to keep index alignment
             
             # Update progress
             progress_info.append({
                 "chunk": i+1,
                 "total_chunks": total_chunks,
+                "chunk_size": len(chunk),
                 "percent_complete": (i+1) / total_chunks * 100,
+                "fields_extracted": field_count,
                 "status": "success"
             })
             
         except Exception as e:
             logger.error(f"Error processing chunk {i+1}/{total_chunks}: {e}")
             
+            # Add empty result for this chunk to keep index alignment
+            results.append({})
+            
             # Update progress with error
             progress_info.append({
                 "chunk": i+1,
                 "total_chunks": total_chunks,
+                "chunk_size": len(chunk),
                 "percent_complete": (i+1) / total_chunks * 100,
+                "fields_extracted": 0,
                 "status": "error",
                 "error": str(e)
             })
     
     # Merge results
+    logger.info(f"Merging results from {len(results)} chunks (successful: {sum(1 for p in progress_info if p.get('status') == 'success')})")
     merged_result = merge_extraction_results(results, schema)
+    logger.info(f"Merge complete, final result has {len(merged_result)} fields: {list(merged_result.keys())}")
     
     return merged_result, progress_info

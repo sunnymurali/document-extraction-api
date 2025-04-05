@@ -47,8 +47,8 @@ def get_chat_openai(temperature: float = 0.1, max_tokens: int = 1000) -> BaseCha
     # First try to use Azure OpenAI
     if AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT_NAME:
         try:
-            logger.info("Configuring Azure OpenAI client")
-            return AzureChatOpenAI(
+            logger.info(f"Configuring Azure OpenAI client with endpoint: {AZURE_OPENAI_ENDPOINT}, deployment: {AZURE_OPENAI_DEPLOYMENT_NAME}, API version: {AZURE_OPENAI_API_VERSION}")
+            azure_client = AzureChatOpenAI(
                 openai_api_version=AZURE_OPENAI_API_VERSION,
                 azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,
                 azure_endpoint=AZURE_OPENAI_ENDPOINT,
@@ -56,24 +56,38 @@ def get_chat_openai(temperature: float = 0.1, max_tokens: int = 1000) -> BaseCha
                 temperature=temperature,
                 max_tokens=max_tokens
             )
+            logger.info("Successfully created Azure OpenAI client")
+            return azure_client
         except Exception as e:
             logger.warning(f"Failed to configure Azure OpenAI: {str(e)}")
             logger.info("Falling back to standard OpenAI")
     else:
         logger.info("Azure OpenAI credentials not fully configured")
+        missing = []
+        if not AZURE_OPENAI_API_KEY:
+            missing.append("AZURE_OPENAI_API_KEY")
+        if not AZURE_OPENAI_ENDPOINT:
+            missing.append("AZURE_OPENAI_ENDPOINT")
+        if not AZURE_OPENAI_DEPLOYMENT_NAME:
+            missing.append("AZURE_OPENAI_DEPLOYMENT_NAME")
+        logger.info(f"Missing Azure OpenAI credentials: {', '.join(missing)}")
         
     # Fallback to standard OpenAI
     if OPENAI_API_KEY:
         try:
-            logger.info("Configuring standard OpenAI client")
-            return ChatOpenAI(
+            logger.info(f"Configuring standard OpenAI client with model: {OPENAI_MODEL}")
+            openai_client = ChatOpenAI(
                 model=OPENAI_MODEL,
                 api_key=OPENAI_API_KEY,
                 temperature=temperature,
                 max_tokens=max_tokens
             )
+            logger.info("Successfully created standard OpenAI client")
+            return openai_client
         except Exception as e:
             logger.error(f"Failed to configure standard OpenAI: {str(e)}")
+    else:
+        logger.warning("OpenAI API key not provided for fallback")
     
     # If we get here, neither client could be configured
     raise Exception("Failed to configure either Azure OpenAI or standard OpenAI. Please check your API credentials.")

@@ -78,14 +78,21 @@ Extract the following common fields (if present):
         # Get OpenAI client with appropriate settings (will try Azure first, then fallback to standard OpenAI)
         client = get_chat_openai(temperature=0.1, max_tokens=1000)
         
-        # Make the API call to OpenAI via LangChain
-        response = client.invoke([system_message, human_message])
+        logger.info("Successfully created OpenAI client, attempting to invoke...")
         
-        # Extract the response content
-        response_content = response.content
+        # Make the API call to OpenAI via LangChain
+        try:
+            response = client.invoke([system_message, human_message])
+            # Extract the response content
+            response_content = response.content
+        except Exception as invoke_error:
+            logger.error(f"Error invoking OpenAI: {str(invoke_error)}")
+            raise Exception(f"Failed to get response from OpenAI: {str(invoke_error)}")
+        
+        logger.info(f"Received response from OpenAI, length: {len(response_content) if response_content else 0}")
         
         # Check if response looks like HTML (it might be an error page)
-        if response_content.strip().startswith('<'):
+        if response_content and response_content.strip().startswith('<'):
             logger.error(f"Received HTML response instead of JSON: {response_content[:100]}...")
             raise Exception("Received HTML error page instead of JSON response. This usually indicates an authentication or API configuration issue.")
         

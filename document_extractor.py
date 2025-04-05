@@ -183,23 +183,38 @@ def extract_document_data(file_path: str, schema: Optional[Dict[str, Any]] = Non
             chunks = split_text_into_chunks(text)
             logger.info(f"Split document into {len(chunks)} chunks")
             
+            # Limit number of chunks to 5 to prevent memory issues/timeouts
+            if len(chunks) > 5:
+                logger.warning(f"Limiting chunks from {len(chunks)} to 5 to prevent memory issues")
+                chunks = chunks[:5]
+            
             # Define a function to extract data from a single chunk
             def extract_from_chunk(chunk_text, schema):
                 return extract_structured_data(chunk_text, schema)
             
             # Process all chunks and merge results
+            # Print first 50 chars of each chunk for debugging
+            for i, chunk in enumerate(chunks):
+                logger.info(f"Chunk {i+1}/{len(chunks)} - Preview: {chunk[:50]}...")
+            
             merged_data, progress_info = process_chunks_with_progress(chunks, extract_from_chunk, schema)
             
-            return {
+            result = {
                 "success": True, 
                 "data": merged_data,
                 "chunking_info": {
                     "used": True,
                     "chunks_processed": len(progress_info),
                     "total_chunks": len(chunks),
+                    "chunks_count": len(chunks),
                     "progress": progress_info
                 }
             }
+            
+            # Summarize the extraction result
+            logger.info(f"Extraction complete: {len(merged_data)} fields extracted from {len(chunks)} chunks")
+            
+            return result
         else:
             # For smaller documents, process as a single chunk
             logger.info("Processing document as a single chunk")
