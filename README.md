@@ -1,40 +1,36 @@
-# Document Data Extractor
+# Document Data Extractor for Large Documents
 
-A powerful, AI-powered document data extraction tool that converts unstructured document content into structured data in JSON format, with support for both OpenAI and Azure OpenAI services.
+A powerful, AI-powered document data extraction tool that converts unstructured document content into structured data in JSON format, optimized for large documents and exclusively using Azure OpenAI services.
 
 ## Features
 
 - **General Document Extraction**: Extract structured data from PDF, TXT, DOC, and DOCX files
 - **Table Extraction**: Identify and extract tables from PDF documents
 - **User-Friendly Field Builder**: Define extraction fields without writing JSON
-- **Dual AI Integration**: Support for both OpenAI API and Azure OpenAI Service
-- **Fallback Mechanism**: Automatic fallback from Azure to standard OpenAI if needed
+- **Azure OpenAI Integration**: Exclusive integration with Azure OpenAI Service
+- **Large Document Processing**: Advanced document chunking capability for processing large documents
+- **Intelligent Result Merging**: Smart merging of extraction results from document chunks
 - **JSON Output**: Results provided in clean, structured JSON format
 
 ## Technical Details
 
 - Built with Flask and FastAPI
-- Integration with OpenAI API and Azure OpenAI Service via LangChain
+- Integration with Azure OpenAI Service via LangChain
 - PyPDF and PyMuPDF for PDF processing
 - Bootstrap CSS for responsive design
+- Intelligent chunking and result merging for large documents
 
 ## Usage
 
 1. Clone the repository
 2. Install dependencies: `pip install -r requirements.txt`
-3. Configure API credentials in environment variables:
+3. Configure Azure OpenAI API credentials in environment variables:
    
-   **For Standard OpenAI:**
-   ```
-   OPENAI_API_KEY=your_openai_api_key
-   ```
-   
-   **For Azure OpenAI:**
    ```
    AZURE_OPENAI_API_KEY=your_azure_openai_api_key
    AZURE_OPENAI_ENDPOINT=https://your-endpoint.openai.azure.com/
    AZURE_OPENAI_DEPLOYMENT_NAME=your_deployment_name
-   AZURE_OPENAI_API_VERSION=2024-02-01  # Optional, defaults to a recent version
+   AZURE_OPENAI_API_VERSION=2024-02-01
    ```
 
 4. Run the application: `python main.py`
@@ -42,11 +38,12 @@ A powerful, AI-powered document data extraction tool that converts unstructured 
 
 ## Environment Configuration
 
-The application will attempt to use Azure OpenAI first if configured, and then fall back to standard OpenAI if needed. You can configure either or both services:
+The application exclusively uses Azure OpenAI services. All of the following environment variables are required:
 
-- **Azure OpenAI Only**: Set only the Azure environment variables for an Azure-exclusive setup
-- **Standard OpenAI Only**: Set only the OPENAI_API_KEY for a standard setup
-- **Dual Configuration**: Set both for a setup that tries Azure first but falls back to standard OpenAI
+- `AZURE_OPENAI_API_KEY`: Your Azure OpenAI API key
+- `AZURE_OPENAI_ENDPOINT`: Your Azure OpenAI endpoint URL
+- `AZURE_OPENAI_DEPLOYMENT_NAME`: The deployment name for your Azure OpenAI model
+- `AZURE_OPENAI_API_VERSION`: The API version to use (e.g., "2024-02-01")
 
 ## Screenshots
 
