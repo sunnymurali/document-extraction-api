@@ -1,9 +1,9 @@
 """
 Document Data Extractor
 
-A utility that extracts structured data from PDF documents using PyPDF and Azure OpenAI models via LangChain.
-Returns extracted information as structured JSON data. This implementation relies exclusively on 
-Azure OpenAI services and does not fall back to standard OpenAI API.
+A utility that extracts structured data from PDF documents using PyPDF and OpenAI models via LangChain.
+Returns extracted information as structured JSON data. This implementation primarily uses
+Azure OpenAI services but can fall back to standard OpenAI API if Azure is unavailable.
 """
 
 import os
@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pypdf
 
 from langchain_core.messages import SystemMessage, HumanMessage
-from utils.azure_openai_config import get_azure_chat_openai
+from utils.azure_openai_config import get_chat_openai
 from utils.document_chunking import (
     split_text_into_chunks,
     merge_extraction_results,
@@ -56,7 +56,8 @@ def extract_text_from_pdf(file_path: str) -> str:
 
 def extract_structured_data(text: str, schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
-    Extract structured data from text using Azure OpenAI via LangChain
+    Extract structured data from text using OpenAI services via LangChain.
+    First attempts to use Azure OpenAI, then falls back to standard OpenAI if necessary.
     
     Args:
         text: The text to extract data from
@@ -97,18 +98,18 @@ Extract the following common fields (if present):
 Return the data as a clean JSON object.
 """
     
+    # Create LangChain message objects
+    system_message = SystemMessage(content=system_prompt)
+    human_message = HumanMessage(content=f"Extract structured data from this document text:\n\n{text}")
+    
     try:
-        logger.info("Attempting to extract data using Azure OpenAI...")
+        logger.info("Attempting to extract data using OpenAI services...")
         
-        # Create LangChain message objects
-        system_message = SystemMessage(content=system_prompt)
-        human_message = HumanMessage(content=f"Extract structured data from this document text:\n\n{text}")
+        # Get OpenAI client with appropriate settings (will try Azure first, then fallback to standard OpenAI)
+        client = get_chat_openai(temperature=0.1, max_tokens=1000)
         
-        # Get Azure OpenAI client with appropriate settings
-        azure_client = get_azure_chat_openai(temperature=0.1, max_tokens=1000)
-        
-        # Make the API call to Azure OpenAI via LangChain
-        response = azure_client.invoke([system_message, human_message])
+        # Make the API call to OpenAI via LangChain
+        response = client.invoke([system_message, human_message])
         
         # Extract the response content
         response_content = response.content
@@ -119,37 +120,37 @@ Return the data as a clean JSON object.
             raise Exception("Received HTML error page instead of JSON response. This usually indicates an authentication or API configuration issue.")
         
         # Try to parse the JSON response
-        try:
-            # Remove any potential markdown code block syntax
-            cleaned_content = response_content
-            if "```json" in cleaned_content:
-                # Extract only the part between ```json and ```
-                parts = cleaned_content.split("```json")
-                if len(parts) > 1:
-                    json_parts = parts[1].split("```")
-                    if json_parts:
-                        cleaned_content = json_parts[0].strip()
-            elif "```" in cleaned_content:
-                # Extract only the part between ``` and ```
-                parts = cleaned_content.split("```")
-                if len(parts) > 1:
-                    cleaned_content = parts[1].strip()
-            
-            logger.debug(f"Cleaned response content for JSON parsing: {cleaned_content[:100]}...")
-            
-            # Try to parse the JSON
-            parsed_data = json.loads(cleaned_content)
-            logger.info("Successfully parsed JSON response")
-            return parsed_data
-        except json.JSONDecodeError as e:
-            logger.error(f"Error parsing JSON from response: {e}")
-            logger.debug(f"Raw response content: {response_content}")
-            error_preview = response_content[:50] + "..." if len(response_content) > 50 else response_content
-            raise Exception(f"Failed to parse JSON response from Azure OpenAI: {e}. Response begins with: {error_preview}")
+        # Remove any potential markdown code block syntax
+        cleaned_content = response_content
+        if "```json" in cleaned_content:
+            # Extract only the part between ```json and ```
+            parts = cleaned_content.split("```json")
+            if len(parts) > 1:
+                json_parts = parts[1].split("```")
+                if json_parts:
+                    cleaned_content = json_parts[0].strip()
+        elif "```" in cleaned_content:
+            # Extract only the part between ``` and ```
+            parts = cleaned_content.split("```")
+            if len(parts) > 1:
+                cleaned_content = parts[1].strip()
+        
+        logger.debug(f"Cleaned response content for JSON parsing: {cleaned_content[:100]}...")
+        
+        # Try to parse the JSON
+        parsed_data = json.loads(cleaned_content)
+        logger.info("Successfully parsed JSON response")
+        return parsed_data
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Error parsing JSON from response: {e}")
+        logger.debug(f"Raw response content: {response_content if 'response_content' in locals() else 'No response'}")
+        error_preview = response_content[:50] + "..." if len(response_content) > 50 else response_content
+        raise Exception(f"Failed to parse JSON response: {e}. Response begins with: {error_preview}")
     
-    except Exception as azure_error:
-        # Log the Azure error and raise it without falling back to standard OpenAI
-        error_msg = f"Azure OpenAI connection failed: {azure_error}"
+    except Exception as e:
+        # Any other error in the process
+        error_msg = f"OpenAI connection failed (tried both Azure and standard OpenAI if configured): {e}"
         logger.error(error_msg)
         raise Exception(error_msg)
 
@@ -291,11 +292,11 @@ def convert_pdf_page_to_base64(file_path: str, page_num: int = 0) -> str:
 
 def extract_tables_from_pdf(file_path: str, max_pages: int = 5) -> Dict[str, Any]:
     """
-    Extract tables from a PDF document using Azure OpenAI
+    Extract tables from a PDF document using OpenAI services
     
-    This function is intended to use Azure OpenAI's vision capabilities when available.
-    Currently, since Azure OpenAI through LangChain doesn't fully support multimodal content,
-    it will return an error message indicating Azure OpenAI connection failed.
+    This function is intended to use OpenAI's vision capabilities when available.
+    Currently, since neither Azure OpenAI nor standard OpenAI through LangChain fully support 
+    multimodal content this way, it will return an error message.
     
     Args:
         file_path: Path to the PDF document
@@ -345,24 +346,22 @@ def extract_tables_from_pdf(file_path: str, max_pages: int = 5) -> Dict[str, Any
                 # Note: This is a placeholder for future Azure OpenAI with vision capabilities
                 # Currently using a temporary implementation until Azure OpenAI fully supports multimodal content
                 try:
-                    # Get Azure OpenAI client for table extraction
-                    azure_client = get_azure_chat_openai(temperature=0.1, max_tokens=2000)
+                    # Get OpenAI client for table extraction with fallback
+                    client = get_chat_openai(temperature=0.1, max_tokens=2000)
                     
-                    # Placeholder for Azure OpenAI vision implementation
-                    # This is intentionally designed to raise an exception for now, as we're explicitly
-                    # choosing to not fall back to OpenAI and instead show the Azure connection failure
-                    logger.info("Attempting to extract tables using Azure OpenAI...")
+                    # Placeholder for OpenAI vision implementation
+                    # This is intentionally designed to raise an exception for now
+                    logger.info("Attempting to extract tables using OpenAI services...")
                     
-                    # This will raise an exception since Azure OpenAI through LangChain doesn't yet support multimodal
-                    # The error will be caught and propagated to indicate Azure connection failed
-                    raise NotImplementedError("Azure OpenAI multimodal extraction not implemented")
+                    # This will raise an exception since LangChain doesn't yet fully support multimodal content this way
+                    # The error will be caught and propagated
+                    raise NotImplementedError("OpenAI multimodal extraction not yet implemented in this application")
                     
                 except Exception as e:
-                    error_msg = f"Azure OpenAI connection failed: {e}"
+                    error_msg = f"OpenAI connection failed (tried both Azure and standard OpenAI if configured): {e}"
                     logger.error(error_msg)
                     
                     # Return an empty array for tables, but with a clear error message
-                    # that the Azure connection failed
                     raise Exception(error_msg)
                 
                 # Note: Since we're raising an exception in the try/except block above,
@@ -396,11 +395,11 @@ def extract_tables_from_pdf(file_path: str, max_pages: int = 5) -> Dict[str, Any
 
 def extract_tables_from_binary_data(file_content: bytes, max_pages: int = 5) -> Dict[str, Any]:
     """
-    Extract tables from binary document content using Azure OpenAI
+    Extract tables from binary document content using OpenAI services
     
-    This function is intended to use Azure OpenAI's vision capabilities when available.
-    Currently, since Azure OpenAI through LangChain doesn't fully support multimodal content,
-    it will return an error message indicating Azure OpenAI connection failed.
+    This function is intended to use OpenAI's vision capabilities when available.
+    Currently, since neither Azure OpenAI nor standard OpenAI through LangChain fully support 
+    multimodal content this way, it will return an error message.
     
     Args:
         file_content: Binary content of the document
