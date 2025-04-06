@@ -3,6 +3,7 @@ Vector Storage and Retrieval
 
 This module provides utilities for storing and retrieving document content using 
 FAISS as a vector database. It handles document ingestion, chunking, and semantic search.
+It includes rate limiting to prevent 429 errors from OpenAI API.
 """
 
 import os
@@ -10,13 +11,17 @@ import time
 import json
 import logging
 import tempfile
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Union
 import uuid
+import threading
+from time import sleep
 
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_openai import AzureOpenAIEmbeddings
+from langchain_core.embeddings import Embeddings
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -35,12 +40,88 @@ if not OPENAI_API_KEY:
 CHUNK_SIZE = 1500
 CHUNK_OVERLAP = 200
 
+# Rate limiting settings (requests per minute)
+RPM_LIMIT = 60  # Default 60 RPM for standard OpenAI API
+DELAY_BETWEEN_REQUESTS = 1.0  # Default delay of 1 second between requests
+BATCH_SIZE = 10  # Process 10 chunks at a time
+
 # Document storage with metadata
 document_metadata = {}
 
+# Lock for thread-safe rate limiting
+rate_limit_lock = threading.Lock()
+last_request_time = 0.0
 
-def get_embeddings():
-    """Get OpenAI embeddings model with error handling"""
+class RateLimitedEmbeddings(Embeddings):
+    """
+    A wrapper for OpenAI embeddings that adds rate limiting
+    to prevent 429 Too Many Requests errors
+    """
+    
+    def __init__(self, wrapped_embeddings: Embeddings, rpm_limit: int = RPM_LIMIT):
+        """
+        Initialize with a wrapped embeddings provider and rate limit
+        
+        Args:
+            wrapped_embeddings: The embeddings provider to wrap
+            rpm_limit: Requests per minute limit (default: 60)
+        """
+        self.wrapped_embeddings = wrapped_embeddings
+        self.rpm_limit = rpm_limit
+        self.delay_seconds = 60.0 / rpm_limit
+        self.last_request_time = 0
+        self.lock = threading.Lock()
+        
+    def _wait_for_rate_limit(self):
+        """Wait if necessary to comply with rate limits"""
+        with self.lock:
+            current_time = time.time()
+            time_since_last_request = current_time - self.last_request_time
+            
+            if time_since_last_request < self.delay_seconds:
+                sleep_time = self.delay_seconds - time_since_last_request
+                logger.debug(f"Rate limiting: sleeping for {sleep_time:.2f} seconds")
+                time.sleep(sleep_time)
+            
+            self.last_request_time = time.time()
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """
+        Embed documents with rate limiting
+        
+        Args:
+            texts: List of texts to embed
+            
+        Returns:
+            List of embeddings vectors
+        """
+        self._wait_for_rate_limit()
+        return self.wrapped_embeddings.embed_documents(texts)
+    
+    def embed_query(self, text: str) -> List[float]:
+        """
+        Embed a query with rate limiting
+        
+        Args:
+            text: Query text to embed
+            
+        Returns:
+            Embedding vector
+        """
+        self._wait_for_rate_limit()
+        return self.wrapped_embeddings.embed_query(text)
+
+
+def get_embeddings(use_rate_limiting: bool = True):
+    """
+    Get OpenAI embeddings model with error handling and optional rate limiting
+    
+    Args:
+        use_rate_limiting: Whether to apply rate limiting to embeddings (default: True)
+    
+    Returns:
+        Embeddings model (rate-limited if specified)
+    """
     # First try Azure OpenAI embeddings
     if os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"):
         try:
@@ -62,7 +143,15 @@ def get_embeddings():
             logger.info("Testing Azure OpenAI embeddings connection")
             _ = embeddings.embed_query("test")
             logger.info("Successfully initialized Azure OpenAI embeddings")
+            
+            # Apply rate limiting if specified
+            if use_rate_limiting:
+                # Azure has higher limits than standard OpenAI, adjust accordingly
+                azure_rpm = int(os.environ.get("AZURE_OPENAI_RPM", "240"))  # Default 240 RPM for Azure
+                logger.info(f"Applying rate limiting to Azure OpenAI embeddings (RPM: {azure_rpm})")
+                return RateLimitedEmbeddings(embeddings, rpm_limit=azure_rpm)
             return embeddings
+            
         except Exception as e:
             logger.error(f"Error initializing Azure OpenAI embeddings, will fall back to standard OpenAI: {str(e)}")
     else:
@@ -81,7 +170,14 @@ def get_embeddings():
             logger.info("Testing OpenAI embeddings connection")
             _ = embeddings.embed_query("test")
             logger.info("Successfully initialized standard OpenAI embeddings")
+            
+            # Apply rate limiting if specified
+            if use_rate_limiting:
+                openai_rpm = int(os.environ.get("OPENAI_RPM", str(RPM_LIMIT)))
+                logger.info(f"Applying rate limiting to standard OpenAI embeddings (RPM: {openai_rpm})")
+                return RateLimitedEmbeddings(embeddings, rpm_limit=openai_rpm)
             return embeddings
+            
         except Exception as e:
             logger.error(f"Error initializing standard OpenAI embeddings: {str(e)}")
     else:
@@ -217,15 +313,43 @@ def add_document_to_vector_store(document_id: str, file_content: bytes, file_nam
         # Create path for this specific collection's FAISS index
         index_path = os.path.join(VECTOR_STORE_DIR, collection_name)
         
-        # For FAISS, we need to create a new vector store from the chunks
-        embeddings = get_embeddings()
+        # For FAISS, we need to create a new vector store from the chunks with rate limiting
+        embeddings = get_embeddings(use_rate_limiting=True)
         
-        # Create a new FAISS index from the chunks
-        vector_store = FAISS.from_documents(chunks, embeddings)
+        # Process chunks in batches to avoid rate limits
+        batch_size = int(os.environ.get("BATCH_SIZE", str(BATCH_SIZE)))
+        total_chunks = len(chunks)
         
-        # Save the index
+        logger.info(f"Processing {total_chunks} chunks in batches of {batch_size}")
+        
+        # Initialize an empty vector store with the first chunk
+        if total_chunks > 0:
+            # Start with the first chunk
+            first_batch = chunks[:1]
+            vector_store = FAISS.from_documents(first_batch, embeddings)
+            logger.info(f"Created initial FAISS store with 1 chunk")
+            
+            # Process remaining chunks in batches
+            remaining_chunks = chunks[1:]
+            for i in range(0, len(remaining_chunks), batch_size):
+                batch = remaining_chunks[i:i+batch_size]
+                
+                logger.info(f"Processing batch {i//batch_size + 1} with {len(batch)} chunks (total progress: {min(i+1+batch_size, total_chunks)}/{total_chunks})")
+                
+                # Add this batch to the vector store
+                if batch:
+                    time.sleep(DELAY_BETWEEN_REQUESTS)  # Add delay between batches
+                    vector_store.add_documents(batch)
+            
+            logger.info(f"Finished processing all {total_chunks} chunks")
+        else:
+            # Empty document, create a placeholder index
+            vector_store = FAISS.from_texts(["placeholder"], embeddings, metadatas=[{"source": "placeholder"}])
+            logger.warning("Document produced no chunks, created placeholder index")
+            
+        # Save the completed index
         vector_store.save_local(index_path)
-        logger.info(f"Added {len(chunks)} chunks to FAISS vector store")
+        logger.info(f"Added {total_chunks} chunks to FAISS vector store")
         
         processing_time = time.time() - start_time
         
@@ -270,11 +394,15 @@ def extract_data_from_vector_store(document_id: str, fields: List[Dict[str, str]
             return {"success": False, "error": f"Document {document_id} not found in vector store"}
         
         collection_name = f"doc_{document_id}"
+        # Use rate-limited embeddings for field extraction too
         vector_store = get_vector_store(collection_name)
         
         # Dictionary to store extraction results
         extracted_data = {}
         field_progress = {}
+        
+        # Add delay between field processing
+        delay_between_fields = float(os.environ.get("DELAY_BETWEEN_FIELDS", "0.5"))
         
         # Process each field with its own query
         for field in fields:
@@ -318,6 +446,9 @@ def extract_data_from_vector_store(document_id: str, fields: List[Dict[str, str]
                 
                 # Update progress
                 field_progress[field_name] = "completed"
+                
+                # Add delay between field processing to avoid rate limits
+                time.sleep(delay_between_fields)
                 
             except Exception as e:
                 logger.error(f"Error extracting field {field_name}: {str(e)}")
