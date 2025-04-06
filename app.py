@@ -340,3 +340,8 @@ def extraction_result(task_id):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
+@app.route("/test")
+def test_page():
+    """Test page for CSS"""
+    return render_template("test.html")
+
