@@ -2,7 +2,7 @@
 Vector Storage and Retrieval 
 
 This module provides utilities for storing and retrieving document content using 
-ChromaDB as a vector database. It handles document ingestion, chunking, and semantic search.
+FAISS as a vector database. It handles document ingestion, chunking, and semantic search.
 """
 
 import os
@@ -13,7 +13,7 @@ import tempfile
 from typing import Dict, List, Optional, Any, Tuple
 import uuid
 
-from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -97,12 +97,25 @@ def get_vector_store(collection_name):
     try:
         embeddings = get_embeddings()
         
-        # Create a persistent ChromaDB instance
-        vector_store = Chroma(
-            collection_name=collection_name,
-            embedding_function=embeddings,
-            persist_directory=VECTOR_STORE_DIR
-        )
+        # Create a path for this specific collection's FAISS index
+        index_path = os.path.join(VECTOR_STORE_DIR, collection_name)
+        os.makedirs(index_path, exist_ok=True)
+        
+        # Check if a FAISS index already exists for this collection
+        index_file = os.path.join(index_path, "index.faiss")
+        if os.path.exists(index_file):
+            logger.info(f"Loading existing FAISS index for {collection_name}")
+            vector_store = FAISS.load_local(
+                index_path, 
+                embeddings, 
+                allow_dangerous_deserialization=True  # This is safe as we control the creation of these files
+            )
+        else:
+            logger.info(f"Creating new FAISS index for {collection_name}")
+            # Create a new empty FAISS index
+            vector_store = FAISS.from_texts(["placeholder"], embeddings, metadatas=[{"source": "placeholder"}])
+            # Save the empty index
+            vector_store.save_local(index_path)
         
         return vector_store
     except Exception as e:
@@ -198,14 +211,21 @@ def add_document_to_vector_store(document_id: str, file_content: bytes, file_nam
         # Initialize vector store
         vector_store = get_vector_store(collection_name)
         
-        # Add chunks to vector store
-        vector_store.add_documents(chunks)
-        logger.info(f"Added {len(chunks)} chunks to vector store")
+        # Remove placeholder document if it exists (from empty index initialization)
+        # FAISS doesn't support delete by id, so we create a new one with the real content
         
-        # Persist the vector store
-        if hasattr(vector_store, 'persist'):
-            vector_store.persist()
-            logger.info("Persisted vector store")
+        # Create path for this specific collection's FAISS index
+        index_path = os.path.join(VECTOR_STORE_DIR, collection_name)
+        
+        # For FAISS, we need to create a new vector store from the chunks
+        embeddings = get_embeddings()
+        
+        # Create a new FAISS index from the chunks
+        vector_store = FAISS.from_documents(chunks, embeddings)
+        
+        # Save the index
+        vector_store.save_local(index_path)
+        logger.info(f"Added {len(chunks)} chunks to FAISS vector store")
         
         processing_time = time.time() - start_time
         
@@ -351,10 +371,14 @@ def delete_document_from_vector_store(document_id: str) -> Dict[str, Any]:
             return {"success": False, "error": f"Document {document_id} not found in vector store"}
         
         collection_name = f"doc_{document_id}"
-        vector_store = get_vector_store(collection_name)
+        index_path = os.path.join(VECTOR_STORE_DIR, collection_name)
         
-        # Clear all documents in the collection
-        vector_store.delete_collection()
+        # For FAISS, we need to delete the index files 
+        # FAISS doesn't have a delete_collection method, so we remove the directory
+        if os.path.exists(index_path):
+            import shutil
+            shutil.rmtree(index_path)
+            logger.info(f"Removed FAISS index directory for {collection_name}")
         
         # Remove metadata
         del document_metadata[document_id]

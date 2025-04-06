@@ -26,6 +26,7 @@ langchain-chroma = "^0.2.2"
 langgraph = "^0.3.25"
 requests = "^2.32.3"
 requests-toolbelt = "^1.0.0"
+faiss-cpu = "^1.10.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0.0"

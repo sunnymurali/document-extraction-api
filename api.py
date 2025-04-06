@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse
 from langgraph.graph import END, StateGraph
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI, AzureOpenAIEmbeddings, AzureChatOpenAI
-from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -165,12 +165,25 @@ def get_vector_store(collection_name):
     try:
         embeddings = get_embeddings()
         
-        # Create a persistent Chroma instance
-        vector_store = Chroma(
-            collection_name=collection_name,
-            embedding_function=embeddings,
-            persist_directory=str(VECTOR_DB_DIR)
-        )
+        # Path for this specific collection's FAISS index
+        index_path = os.path.join(str(VECTOR_DB_DIR), collection_name)
+        os.makedirs(index_path, exist_ok=True)
+        
+        # Check if a FAISS index already exists for this collection
+        index_file = os.path.join(index_path, "index.faiss")
+        if os.path.exists(index_file):
+            logger.info(f"Loading existing FAISS index for {collection_name}")
+            vector_store = FAISS.load_local(
+                index_path, 
+                embeddings, 
+                allow_dangerous_deserialization=True  # This is safe as we control the creation of these files
+            )
+        else:
+            logger.info(f"Creating new FAISS index for {collection_name}")
+            # Create a new empty FAISS index
+            vector_store = FAISS.from_texts(["placeholder"], embeddings, metadatas=[{"source": "placeholder"}])
+            # Save the empty index
+            vector_store.save_local(index_path)
         
         return vector_store
     except Exception as e:
@@ -276,12 +289,18 @@ async def process_document(document_id: str, file_path: str, file_name: str):
         collection_name = f"doc_{document_id}"
         vector_store = get_vector_store(collection_name)
         
-        # Add chunks to vector store
-        vector_store.add_documents(chunks)
+        # For FAISS, we create a new index from the chunks
+        embeddings = get_embeddings()
         
-        # Persist the vector store
-        if hasattr(vector_store, 'persist'):
-            vector_store.persist()
+        # Path for this specific collection's FAISS index
+        index_path = os.path.join(str(VECTOR_DB_DIR), collection_name)
+        
+        # Create a new FAISS index from the chunks
+        vector_store = FAISS.from_documents(chunks, embeddings)
+        
+        # Save the index
+        vector_store.save_local(index_path)
+        logger.info(f"Saved FAISS index for {collection_name}")
         
         # Update document status
         document_store[document_id]["status"] = "indexed"
@@ -394,6 +413,7 @@ async def extract_field(document_id: str, task_id: str, field: ExtractionField):
                 # Call LLM with retry for rate limiting
                 max_retries = 3
                 retry_count = 0
+                response = None
                 
                 while retry_count < max_retries:
                     try:
@@ -415,6 +435,14 @@ async def extract_field(document_id: str, task_id: str, field: ExtractionField):
                                 "error": str(e)
                             }
                 
+                # If we couldn't get a response after all retries
+                if response is None:
+                    return {
+                        "field_name": field_name,
+                        "field_value": None,
+                        "error": "Failed to get response from LLM after multiple attempts"
+                    }
+                
                 # Parse response
                 try:
                     result = json.loads(response.content)
@@ -424,6 +452,7 @@ async def extract_field(document_id: str, task_id: str, field: ExtractionField):
                         "confidence": result.get("confidence", 0.0)
                     }
                 except Exception as e:
+                    field_name = state.get("field_name", "unknown")
                     logger.error(f"Error parsing LLM response for field {field_name}: {str(e)}")
                     return {
                         "field_name": field_name,
@@ -432,6 +461,7 @@ async def extract_field(document_id: str, task_id: str, field: ExtractionField):
                     }
             
             except Exception as e:
+                field_name = state.get("field_name", "unknown")
                 logger.error(f"Error in generate step for field {field_name}: {str(e)}")
                 return {
                     "field_name": field_name,
@@ -496,16 +526,22 @@ async def extract_field(document_id: str, task_id: str, field: ExtractionField):
                 "completed_at": time.time()
             }
             
-        logger.info(f"Field {field_name} extraction completed for task {task_id}")
+        logger.info(f"Field extraction completed for task {task_id}")
         
     except Exception as e:
-        logger.error(f"Error extracting field {field_name} for task {task_id}: {str(e)}")
-        extraction_tasks[task_id]["fields"][field_name] = {
-            "status": "failed",
-            "result": None,
-            "error": str(e),
-            "completed_at": time.time()
-        }
+        logger.error(f"Error extracting field for task {task_id}: {str(e)}")
+        # Even in case of error, we want to make sure the field's status is updated
+        try:
+            extraction_tasks[task_id]["fields"][field_name] = {
+                "status": "failed",
+                "result": None,
+                "error": str(e),
+                "completed_at": time.time()
+            }
+        except:
+            # In case field_name is not defined, we'll leave the task as is
+            logger.error(f"Could not update field status for task {task_id} due to field_name not being defined")
+            pass
 
 # API endpoints
 @app.post("/api/upload", response_model=DocumentUploadResponse)
