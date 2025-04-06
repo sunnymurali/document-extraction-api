@@ -22,8 +22,10 @@ from utils.vector_store import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create Flask app
-app = Flask(__name__)
+# Create Flask app with explicit static folder configuration
+app = Flask(__name__, 
+            static_url_path='/static',
+            static_folder='static')
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key")
 
 # Storage for document and task data
